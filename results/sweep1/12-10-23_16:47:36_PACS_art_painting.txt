@@ -1,0 +1,18 @@
+target domain art_painting, t : 3.0, w1: 0.9, w2: 0.1, w3: 0.5
+Best val 0.9652605652809143, corresponding test 0.9140625 - best test: 0.9189453125, best epoch: 4
+
+target domain art_painting, t : 3.0, w1: 0.8, w2: 0.2, w3: 0.5
+Best val 0.9652605652809143, corresponding test 0.91064453125 - best test: 0.91845703125, best epoch: 13
+
+target domain art_painting, t : 3.0, w1: 0.9, w2: 0.1, w3: 1.0
+Best val 0.9689826369285583, corresponding test 0.91162109375 - best test: 0.92529296875, best epoch: 16
+
+target domain art_painting, t : 3.0, w1: 0.8, w2: 0.2, w3: 1.0
+Best val 0.9727047085762024, corresponding test 0.921875 - best test: 0.92431640625, best epoch: 19
+
+target domain art_painting, t : 3.0, w1: 0.9, w2: 0.1, w3: 2.0
+Best val 0.9677419066429138, corresponding test 0.9169921875 - best test: 0.91943359375, best epoch: 15
+
+target domain art_painting, t : 3.0, w1: 0.8, w2: 0.2, w3: 2.0
+Best val 0.9702233076095581, corresponding test 0.91943359375 - best test: 0.921875, best epoch: 19
+
