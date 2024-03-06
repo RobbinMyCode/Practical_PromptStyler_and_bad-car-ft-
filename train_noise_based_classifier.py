@@ -15,7 +15,7 @@ from timm.models import create_model
 
 def get_args():
     parser = argparse.ArgumentParser(description="Script to launch CLIP distillation")
-    parser.add_argument("--dataset", default="PACS")
+    parser.add_argument("--dataset", default="Terra")
     parser.add_argument("--Domain_ID", default=['sketch', 'photo', 'cartoon', 'art_painting'])
     parser.add_argument("--classes", default=["dog", "elephant", "giraffe", "guitar", "horse", "house", "person"])
     parser.add_argument("--batch_size", "-b", type=int, default=128, help="Batch size")
@@ -43,82 +43,24 @@ def get_args():
 
 
 class WordModel(nn.Module):
-    def __init__(self, a_embedding, style_of_a_embedding, n_style_words=80, style_word_dim=512, style_words_to_load = None):
+    def __init__(self, n_style_words=80, style_word_dim=512, style_words_to_load = None):
         super(WordModel, self).__init__()
         if torch.is_tensor(style_words_to_load):
             self.style_words = style_words_to_load
-        #self.style_words = torch.nn.Parameter(torch.normal(0, 0.02, size=(n_style_words, style_word_dim) ))
         else:
-            self.style_words = torch.nn.Parameter((torch.randn((n_style_words, style_word_dim)) ) * 0.02) #og promtstyler
-            #self.style_words = torch.nn.Parameter((torch.randn((n_style_words, style_word_dim))) * 0.5) #adding promtstyler
-        self.a_embed = a_embedding
-        self.style_of_a_embed = style_of_a_embedding
-        for x in [self.a_embed, self.style_of_a_embed]:
-            x.required_grad = False
+            self.style_words = torch.nn.Parameter((torch.randn((n_style_words, style_word_dim))) * 0.02) #adding promtstyler
     def forward(self, class_words):
-        style_features = (self.a_embed + self.style_words + self.style_of_a_embed) #/ 3.0
-        style_content_features = (self.a_embed + self.style_words[:, None, :] + self.style_of_a_embed + class_words[None, :, :]) #/ 4.0
-        #style_content_features = self.style_words[:, None, :] + class_words[None, :, :]
-        return [style_features, style_content_features]
+        style_features_no___ = self.style_words
+        style_content_features___ = self.style_words[:, None, :] + class_words[None, :, :]
+        return [style_features_no___, style_content_features___]
 
 class ArcFaceLinear(nn.Module):
     def __init__(self, dim_in, dim_out, s=5, m=0.5):
         super().__init__()
-        #for loss func:
-        self.sin_m = torch.sin(torch.tensor(m))
-        self.cos_m = torch.cos(torch.tensor(m))
-        self.s = s
-        self.dim_out = dim_out
-
-        #for classifier
-        self.weight_tensor = torch.nn.Parameter((torch.randn((dim_in, dim_out))) * 0.1) #init gaussian
-        self.normed_weight_tensor = self.weight_tensor.detach().clone() #becomes normed weight tensor in forward
+        self.fc = nn.Linear(dim_in, dim_out, bias=False)
     def forward(self, style_content_words):
-        norm_words = torch.sqrt(torch.sum(style_content_words**2, axis=-1)).unsqueeze(-1)
-        normed_content_words = style_content_words/norm_words
-
-        norm_weights = torch.sqrt(torch.sum(self.weight_tensor**2, axis=0)).unsqueeze(0)
-        normed_weights = self.weight_tensor / norm_weights
-        self.normed_weight_tensor = normed_weights.detach().clone()
-
-        cos_theta = normed_content_words @ normed_weights # x and w normed --> = cos_theta
-        return cos_theta
-
-    def arcface_loss(self, cos_theta, labels):
-        '''
-        :param model:
-        :param cos_theta: contains ALL angles wrt output (batchsize,outdim)
-        :param labels: labebls as numerical values (batchsize) [1..outdim]
-        :return:
-        '''
-
-        sin_theta = (1 - cos_theta ** 2) ** 0.5
-        cos_theta_plus_m = cos_theta * self.cos_m - sin_theta * self.sin_m #sin_theta+m
-
-        exp_pos = torch.exp(self.s * cos_theta_plus_m)
-        exp_neg = torch.exp(self.s * cos_theta)
-
-        one_hot_labels = F.one_hot(labels, num_classes=self.dim_out)
-        numerator = torch.max(exp_pos*one_hot_labels[None, :], axis=-1)[0].flatten()
-        denominator = torch.sum(torch.abs(1 - one_hot_labels) * exp_neg, axis=-1) +numerator
-
-        L3 = - torch.log(numerator/denominator) #loss for each sample
-        return torch.sum(L3)
-    def arcface_softmax(self, cos_theta):
-        sin_theta = (1 - cos_theta ** 2) ** 0.5
-        cos_theta_plus_m = cos_theta * self.cos_m - sin_theta * self.sin_m  # sin_theta+m
-
-        exp_pos = torch.exp(self.s * cos_theta_plus_m)
-        exp_neg = torch.exp(self.s * cos_theta)
-
-        #one_hot_labels = F.one_hot(labels, num_classes=self.dim_out)
-        numerator = exp_pos #torch.max(exp_pos * one_hot_labels[None, :], axis=-1)[0].flatten()
-        denominator_sum_all = torch.sum(exp_neg, axis=-1)
-        result = numerator
-        for i in range(result.size(1)):
-            result[:, i] /= (denominator_sum_all - exp_neg[:, i] + exp_pos[:, i])
-
-        return result
+        x = self.fc(style_content_words)
+        return x, self.fc.weight.detach().clone()
 
 def style_loss(style_vec, style_index=1):
     if style_index == 0:
@@ -138,6 +80,14 @@ def content_loss(style_content_words, content_words, style_index=1, n_classes=7)
         loss to maximize cosine similarity with style_content_vector and corresponding content_vector while minimizing all other similarities
         - exp for softmax and log for loss scaling [0,1]-> [infty, 0]
     '''
+    #print("scw", style_content_words.size(), "cw", content_words.size())
+    #exit()
+    #torch.Size([1, 512]) torch.Size([7, 512]) torch.Size([7, 512])
+#sc words torch.Size([7, 512]) content torch.Size([7, 512])
+#norm_sc torch.Size([]) norm content torch.Size([7])
+#z vector prod torch.Size([7])
+#z torch.Size([7])
+#CORRECT scw torch.Size([14, 128, 512]) cw torch.Size([128, 512]) #128 samples =7, 14=stylewords
     z = style_content_words[style_index] @ content_words.T / (
             torch.linalg.norm(style_content_words[style_index], axis=-1) * torch.linalg.norm(content_words, axis=-1))
     z = torch.exp(z)
@@ -149,27 +99,76 @@ def content_loss(style_content_words, content_words, style_index=1, n_classes=7)
 
 def style_content_loss(model_output, content_labels, style_index=1, n_classes=7):
     loss = content_loss(model_output[1], content_labels, style_index, n_classes) + style_loss(model_output[0], style_index)
+    #loss += style_loss(model_output[2], style_index)
     return loss
+
+def arcface_loss(linear_output, linear_input, linear_weights, labels, s=5, m=0.5):
+    #arcface_softmax
+    cos_m = torch.cos(torch.tensor(m))
+    sin_m = torch.sin(torch.tensor(m))
+
+    norm_weights = torch.sqrt(torch.sum(linear_weights ** 2, axis=-1)).unsqueeze(0)
+    norm_input = torch.sqrt(torch.sum(linear_input ** 2, axis=-1)).unsqueeze(-1)
+
+    # from out = in @ weights = |in| * |weights| *cos(theta) --> cos(theta) = out/(|in| * |weights|)
+    cos_theta = linear_output / (norm_input * norm_weights)
+
+    sin_theta = (1 - cos_theta ** 2) ** 0.5
+    cos_theta_plus_m = cos_theta * cos_m - sin_theta * sin_m  # expansion formula of cos(a+b)
+
+    exp_pos = torch.sum(torch.exp(s * cos_theta_plus_m) * F.one_hot(labels, num_classes=-1), axis=-1)
+    exp_neg = torch.exp(s * cos_theta)
+
+    denominator_sum = torch.sum(exp_neg * (1 - F.one_hot(labels, num_classes=-1)), axis=-1)
+
+    target = exp_pos / (denominator_sum + exp_pos)
+    error = - torch.log(target)
+    return torch.mean(error)
+def arcface_softmax(linear_output, linear_input, linear_weights, s=5, m=0.5):
+    '''
+        computes the arcface softmax of a linear layer (which must not use a bias)
+    :param self:
+    :param linear_output: output of linear layer (of which to compute the arcface softmax)
+    :param linear_input: input to linear layer
+    :param linear_weights: linear.weight (for linear layer)
+    :param s: scaling hyperparameter of arcface
+    :param m: angle parameter of arcface
+    :return:
+    '''
+    cos_m = torch.cos(torch.tensor(m))
+    sin_m = torch.sin(torch.tensor(m))
+
+    norm_weights = torch.sqrt(torch.sum(linear_weights ** 2, axis=-1)).unsqueeze(0)
+    norm_input = torch.sqrt(torch.sum(linear_input ** 2, axis=-1)).unsqueeze(-1)
+
+    #from out = in @ weights = |in| * |weights| *cos(theta) --> cos(theta) = out/(|in| * |weights|)
+    cos_theta = linear_output / (norm_input * norm_weights)
+
+    sin_theta = (1 - cos_theta ** 2) ** 0.5
+    cos_theta_plus_m = cos_theta * cos_m - sin_theta * sin_m  #expansion formula of cos(a+b)
+
+    exp_pos = torch.exp(s * cos_theta_plus_m)
+    exp_neg = torch.exp(s * cos_theta)
+
+    denominator_sum_all = torch.sum(exp_neg, axis=-1)
+    result = exp_pos
+
+    for i in range(result.size(1)):
+        result[:, i] /= (denominator_sum_all - exp_neg[:, i] + exp_pos[:, i]) # / all neg but i
+    return result
 
 class Trainer:
     def __init__(self, args, device, target_name):
         self.args = args
         self.device = device
 
-        self.clip_model, _ = clip.load(self.args.CLIP, device=self.device)
+        self.clip_model, self.image_preprocess = clip.load(self.args.CLIP, device=self.device)
         if self.args.dataset == "Terra":
             print("please load your finetuned CLIP weight here")
             # model_weights = torch.load("/path/finetuned_clip")
             # self.clip_model.load_state_dict(model_weights)
-
-        # ---CLIP prompt engineering
-
-        self.num_style_vectors = 80
-
-
-        self.text_feature_dim = 512  #=1024 resnet, =512 Vit-B/16, #768 viT-L/14
-        style_word_dim = 512  # resnet, vit-b, #768 vit-l
-        self.n_style_words = 80
+        self.text_feature_dim = 512  if args.CLIP == "ViT-B/16" else 768#=1024 resnet, =512 Vit-B/16, #768 viT-L/14
+        self.n_style_words = 14
 
 
         if args.dataset == "Terra":
@@ -179,23 +178,13 @@ class Trainer:
         else:
             self.text_anchor = args.source  ###all named styles except the one for testing e.g. could be PACS: ['art_painting', 'sketch', 'photo'] but not 'cartoon'
 
-        token_a = clip.tokenize(f"a ").to(self.device)
-        self.style_words = torch.normal(0, 0.02, size=(self.n_style_words, style_word_dim), device=self.device)
-
-        token_style_of_a = clip.tokenize(f" style of a ").to(self.device)
         token_classes = torch.cat([clip.tokenize(f"{c}") for c in self.args.classes]).to(self.device)
-
-
-        self.a_embedding = self.clip_model.encode_text(token_a)
-        self.a_style_of_a_embedding = self.clip_model.encode_text(token_style_of_a)
-
         self.content_features = self.clip_model.encode_text(token_classes).to(torch.float32).to(self.device)
         with torch.no_grad():
             self.clip_model.eval()
 
 
-        word_model = WordModel(self.a_embedding, self.a_style_of_a_embedding,
-                               self.n_style_words, self.text_feature_dim)
+        word_model = WordModel(self.n_style_words, self.text_feature_dim)
         self.word_model = word_model.to(self.device)
 
         self.test_data = CheapTestImageDataset(base_path="/home/robin/Documents/Domain_Generalization/data/"+args.dataset,
@@ -207,10 +196,14 @@ class Trainer:
         self.current_epoch = 0
         self.target_name = target_name
     def _do_epoch(self):
+        '''
+            trains an epoch for "pseudowords": noise for classes
+        :return:
+        '''
         self.word_model.train()
         self.word_model.zero_grad()
 
-        class_vec_samples = self.content_features[torch.randint(len(self.args.classes), (128,))]
+        class_vec_samples = torch.cat((self.content_features, self.content_features_style_word), 0)[torch.randint(len(self.args.classes), (128,))]
         self.optimizer_sgd.zero_grad()
         model_output = self.word_model(class_vec_samples)
         word_loss = style_content_loss(model_output, class_vec_samples,
@@ -224,62 +217,112 @@ class Trainer:
         self.word_model.eval()
         print('|', end='', sep='')
 
-    def do_test(self, features, labels):
+    def do_test(self, features, labels, paths):
+        from PIL import ImageFile, Image
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+
         import numpy as np
         class_correct = 0
-        data, class_l = features.to(self.device), labels.to(self.device)
-        #print(data, class_l)
-        CLIP_image_features = self.clip_model.encode_image(data).type(torch.float32)
-        #print("image feature size",CLIP_image_features.size())
-        predictions = self.lin_model(CLIP_image_features)
-        softmax_pred = self.lin_model.arcface_softmax(predictions)
+        data, class_l = features.to(self.device), labels.to(self.device) #do not use data but load again
+        #print(data.size())
+        #data = self.image_preprocess(data)
+        #CLIP_image_features = self.clip_model.encode_image(data).type(torch.float32)
+        for i, path in enumerate(paths):
+            data_n = self.image_preprocess(Image.open(path)).to(self.device).unsqueeze(0)
+            if i == 0:
+                CLIP_image_features = self.clip_model.encode_image(data_n).type(torch.float32).to(self.device)
+            else:
+                CLIP_image_features = torch.cat((CLIP_image_features, self.clip_model.encode_image(data_n).type(torch.float32).to(self.device)), 0)
+        #print(data)
+        data = torch.tensor(data)
+        predictions, _ = self.lin_model(CLIP_image_features)
+        softmax_pred = torch.nn.Softmax(dim=-1)(predictions) #self.lin_model.arcface_softmax(predictions)
+        #softmax_pred = arcface_softmax(predictions, CLIP_image_features, self.lin_model.fc.weight)
         pred_index = torch.argmax(softmax_pred, axis=-1)
-        #print(predictions[:10], "\n ========== ", softmax_pred[:10] ,"\n ==========", "pred index", pred_index[:10], "===")
-        #print(class_l[:10])
-            #student_embedding, student_logits = self.model(data)
-            #similarity = student_logits.softmax(dim=-1)
-            #if self.args.dataset == "Terra":
-            #    student_embedding /= student_embedding.norm(dim=-1, keepdim=True)
-            #    student_logits_clip = (100.0 * student_embedding @ self.text_features_ems.T.type(torch.float32)).type(torch.float32)
-            #    similarity_clip = student_logits_clip.softmax(dim=-1)
-            #    similarity += similarity_clip
-            #_, cls_pred = similarity.max(dim=1)
         class_correct += torch.sum(pred_index == class_l)
         return class_correct
 
     def do_training(self):
+        token_style_word_to_class = torch.cat([clip.tokenize(f"a photo of a {c}.") for c in self.args.classes]).to(
+            self.device)
+        self.content_features_style_word = self.clip_model.encode_text(token_style_word_to_class).to(torch.float32).to(
+            self.device)
+
         self.logger = Logger(self.args, update_frequency=30)
         self.results = {"val": torch.zeros(self.args.epochs), "test": torch.zeros(self.args.epochs)}
 
-        #print("Parameters", [p for p in self.word_model.parameters()])
-       # for self.n_style_vec in range(self.n_style_words):
-       #     for self.current_epoch in range(self.args.epochs):
-       #         #print("epoch ", self.current_epoch)
-       #         self._do_epoch()
-       #     print("training of style_word #" + str(self.n_style_vec) + " finished")
-        #print("========== \n ========== \n" + "After training: \n", self.word_model.style_words)
+        train_noise = True
+        if train_noise:
+            for self.n_style_vec in range(self.n_style_words):
+                for self.current_epoch in range(self.args.epochs):
+                    self._do_epoch()
+                print("training of style_word #" + str(self.n_style_vec) + " finished")
 
-        final_style_words = self.word_model.style_words.detach().clone()#*0.00001
-        #self.a_style_of_a_embedding = 0.000001
-        style_content_features = (self.a_embedding + final_style_words[:, None, :] +
-                                  self.a_style_of_a_embedding + self.content_features[None, :, :]) #/ 4.0
+        final_style_words = self.word_model.style_words.detach().clone()#*0
+        final_style_words_no = self.word_model.style_words.detach().clone()
+
+
+        #description_list = [f"itap of a {c}.") for c in self.args.classes]
+
+        RAM_Device = self.device if (self.args.dataset == "PACS" or self.args.dataset == "VLCS") else "cpu"
+
+        t1 = torch.cat([clip.tokenize(f"itap of a {c}.") for c in self.args.classes]).to(RAM_Device)
+        t2 = torch.cat([clip.tokenize(f"a bad photo of the {c}.") for c in self.args.classes]).to(RAM_Device)
+        t3 = torch.cat([clip.tokenize(f"a origami {c}.") for c in self.args.classes]).to(RAM_Device)
+        t4 = torch.cat([clip.tokenize(f"a photo of the large {c}.") for c in self.args.classes]).to(RAM_Device)
+        t5 = torch.cat([clip.tokenize(f"a {c} in a video game.") for c in self.args.classes]).to(RAM_Device)
+        t6 = torch.cat([clip.tokenize(f"art of the {c}.") for c in self.args.classes]).to(RAM_Device)
+        t7 = torch.cat([clip.tokenize(f"a photo of the small {c}.") for c in self.args.classes]).to(RAM_Device)
+
+        s1 = torch.cat([clip.tokenize(f"a drawing of a {c}.") for c in self.args.classes]).to(RAM_Device)
+        s2 = torch.cat([clip.tokenize(f"a sketch of a {c}.") for c in self.args.classes]).to(RAM_Device)
+        s3 = torch.cat([clip.tokenize(f"an image of a {c}.") for c in self.args.classes]).to(RAM_Device)
+
+        s4 = torch.cat([clip.tokenize(f"a painting of a {c}.") for c in self.args.classes]).to(RAM_Device)
+        s5 = torch.cat([clip.tokenize(f"a cartoon of a {c}.") for c in self.args.classes]).to(RAM_Device)
+        s6 = torch.cat([clip.tokenize(f"a cartoon {c}.") for c in self.args.classes]).to(RAM_Device)
+
+
+        amount_of_vecs_per_class = 1 if self.args.dataset == "Officehome" else 5
+        style_content_features = (final_style_words.to(RAM_Device)[:amount_of_vecs_per_class, None, :]*0 + self.content_features_style_word.to(RAM_Device)[None, :, :]) #/ 4.0
+
+
+        for t in [t1,t2,t3,t4,t5,t6,t7, s1,s2,s3, s4, s5, s6]:
+            style_content_features = torch.cat((style_content_features, final_style_words.to(RAM_Device)[:amount_of_vecs_per_class, None, :] * 0 +
+                                                self.clip_model.encode_text(t.to(self.device)).to(torch.float32).to(RAM_Device)[None, :, :]), 0)
+
+        style_content_features = torch.cat((style_content_features, final_style_words[:amount_of_vecs_per_class, None, :].to(RAM_Device)*0 + self.content_features.to(RAM_Device)[None, :, :]), 0)
+        style_content_features_no = final_style_words_no.to(RAM_Device)[:, None, :] + self.content_features.to(RAM_Device)[None, :, :]
         #style_content_features = ((torch.randn((80, 512)) ) * 0.000000001).to(self.device)[:, None, :] + self.content_features[None, :, :]
         flattened_sc_features = torch.flatten(style_content_features, end_dim=1)
+        flattened_sc_no  = torch.flatten(style_content_features_no, end_dim=1)
 
-        input = (flattened_sc_features).to(self.device)#.permute(1,0)
+        input = torch.cat((flattened_sc_features, flattened_sc_no), 0).to(RAM_Device)#.permute(1,0)
+        print(flattened_sc_features.size(), flattened_sc_no.size(), input.size())
         #for i in range(4):
         #    print(input[5*i:5*(i+1)])
         targets = torch.tensor(range(len(self.content_features))).repeat(
-            len(final_style_words), 1).flatten().to(self.device) # permute(1,0)
+            1*len(flattened_sc_no)+len(flattened_sc_features), 1).flatten().to(RAM_Device) # permute(1,0)
+
+        #self.clip_model = self.clip_model.to(RAM_Device)
+        print(targets.size())
+        #for i in range(25):
+        #    print(flattened_sc_features[i] - self.content_features[i%7])
+        #    print(targets[i])
+        #    for i in range(2):
+        #        print("===============================================")
+        #exit()
 
         self.input = input
         self.lin_model = ArcFaceLinear(self.text_feature_dim, len(self.content_features)).to(self.device)
-        lin_optimizer = torch.optim.SGD(self.lin_model.parameters(), lr=0.005, momentum=0.9)
+        lin_optimizer = torch.optim.SGD(self.lin_model.parameters(), lr=0.05, momentum=0.9)
+        #self.clip_model.to(RAM_Device)
         #print(input.size(), targets.size())
 
         #lin layer training
-        batchsize = 128
-        for n_lin_epoch in range(self.lin_epochs):
+        batch_size_to_remember = 128#32 if self.args.dataset == "Officehome" else 128
+        batchsize = batch_size_to_remember
+        for n_lin_epoch in range(15):#2*2*self.lin_epochs):
             for batch_start in range(0, input.size(0), batchsize):
                 self.lin_model.train()
                 self.lin_model.zero_grad()
@@ -290,12 +333,13 @@ class Trainer:
 
                 torch.autograd.set_detect_anomaly(True)
                 randperm = torch.randperm(batchsize)
-                batch_in = (input[batch_start : batch_start+batchsize])[randperm]
-                batch_target = (targets[batch_start : batch_start+batchsize])[randperm]
-                #print("batch_in", batch_in, batch_start, batchsize)
-                lin_model_pred = self.lin_model(batch_in)
-                #print("wighs init \n", self.lin_model.fc1_normed.weight_v, self.lin_model.fc1_normed.weight_g)
-                loss = self.lin_model.arcface_loss(lin_model_pred, batch_target)
+                batch_in = (input[batch_start : batch_start+batchsize])[randperm].to(self.device)
+                batch_target = (targets[batch_start : batch_start+batchsize])[randperm].to(self.device)
+                lin_model_pred, weights = self.lin_model(batch_in)
+
+                #softmax_pred = arcface_softmax(lin_model_pred, batch_in, weights)
+                loss_af = arcface_loss(lin_model_pred, batch_in, weights, batch_target)
+                loss = 1 * torch.nn.CrossEntropyLoss()(lin_model_pred, batch_target) + 1 * loss_af#self.lin_model.arcface_loss(lin_model_pred, batch_target)
                 print(loss.cpu().detach().numpy(), end="||")
                 loss.backward(retain_graph=True)
                 #print("wighs beefore \n", self.lin_model.fc1_normed.weight_v, self.lin_model.fc1_normed.weight_g)
@@ -304,17 +348,27 @@ class Trainer:
                 #print("wighs after \n", self.lin_model.fc1_normed.weight_v, self.lin_model.fc1_normed.weight_g)
                 #self.lin_model.eval()
                 #exit("done")
-                batchsize = 128
+                batchsize = batch_size_to_remember
+                #batch_in.detach()
+                #batch_target.detach()
+                #if RAM_Device == "cpu":
+                #    for itm in [lin_model_pred, weights, batch_in, batch_target]:
+                #        itm.detach()
+
+                #torch.cuda.empty_cache()
             print("epoch "+ str(n_lin_epoch)+ " done.")
         self.lin_model.eval()
 
         class_correct = 0
+        intermediate_total = 0
+        self.clip_model = self.clip_model.to(self.device)
         with torch.no_grad():
             for execution_nr in range(self.dataloader.__len__()):  # complex way to write sample ove rall samples
-                features, labels, _ = next(iter(self.dataloader))
+                features, labels, _,  paths = next(iter(self.dataloader))
                 total = self.test_data.__len__()
-                class_correct += self.do_test(features, labels)
-                print("currently ", class_correct, "ouf of ", (execution_nr + 1) * self.args.batch_size, " correct.")
+                intermediate_total += len(labels)
+                class_correct += self.do_test(features, labels, paths)
+                print("currently ", class_correct.cpu().detach().numpy(), "ouf of ", intermediate_total, " correct. (", class_correct.cpu().detach().numpy()/(intermediate_total)*100,"%)" )
             print("total accuracy:", 1.0 * class_correct / total)
         # return
 
@@ -340,7 +394,7 @@ def train_with_sweep():
         args.n_classes = 7
         args.n_domain = 4
     elif args.dataset == "VLCS":
-        args.Domain_ID = ["LABELME", "SUN", "VOC", "CALTECH"]
+        args.Domain_ID = ["LabelMe", "SUN09", "VOC2007", "Caltech101"]
         args.classes = ["bird", "car", "chair", "dog", "person"]
         args.n_classes = 5
         args.n_domain = 4
@@ -359,7 +413,7 @@ def train_with_sweep():
                         "Monitor", "Mop", "Mouse", "Mug", "Notebook", "Oven", "Pan", "Paper_Clip", "Pen", "Pencil",
                         "Postit_Notes", "Printer", "Push_Pin", "Radio", "Refrigerator", "Ruler", "Scissors",
                         "Screwdriver", "Shelf", "Sink", "Sneakers", "Soda", "Speaker", "Spoon", "Table", "Telephone",
-                        "Toothbrush", "Toys", "Trash_Can", "TV", "Webcam"]
+                        "ToothBrush", "Toys", "Trash_Can", "TV", "Webcam"]
         args.n_classes = 65
         args.n_domain = 4
     else:

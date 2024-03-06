@@ -13,29 +13,29 @@ import pickle
 def get_args():
     parser = argparse.ArgumentParser(description="Script to launch CLIP distillation")
     parser.add_argument("--dataset", default="Terra")
-    #parser.add_argument("--Domain_ID", default=['sketch', 'photo', 'cartoon', 'art_painting'])
-    #parser.add_argument("--classes", default=["dog", "elephant", "giraffe", "guitar", "horse", "house", "person"])
+    parser.add_argument("--Domain_ID", default=['sketch', 'photo', 'cartoon', 'art_painting'])
+    parser.add_argument("--classes", default=["dog", "elephant", "giraffe", "guitar", "horse", "house", "person"])
     parser.add_argument("--batch_size", "-b", type=int, default=128, help="Batch size")
-    #parser.add_argument("--image_size", type=int, default=224, help="Image size")
-    #parser.add_argument("--min_scale", default=0.8, type=float, help="Minimum scale percent")
-    #parser.add_argument("--max_scale", default=1.0, type=float, help="Maximum scale percent")
-    #parser.add_argument("--random_horiz_flip", default=0.5, type=float, help="Chance of random horizontal flip")
-    #parser.add_argument("--jitter", default=0.4, type=float, help="Color jitter amount")
-    #parser.add_argument("--tile_random_grayscale", default=0.1, type=float, help="Chance of randomly greyscale")
-    #parser.add_argument("--learning_rate", "-l", type=float, default=.001, help="Learning rate")
+    parser.add_argument("--image_size", type=int, default=224, help="Image size")
+    parser.add_argument("--min_scale", default=0.8, type=float, help="Minimum scale percent")
+    parser.add_argument("--max_scale", default=1.0, type=float, help="Maximum scale percent")
+    parser.add_argument("--random_horiz_flip", default=0.5, type=float, help="Chance of random horizontal flip")
+    parser.add_argument("--jitter", default=0.4, type=float, help="Color jitter amount")
+    parser.add_argument("--tile_random_grayscale", default=0.1, type=float, help="Chance of randomly greyscale")
+    parser.add_argument("--learning_rate", "-l", type=float, default=.001, help="Learning rate")
     parser.add_argument("--epochs", "-e", type=int, default=175, help="Number of epochs for each styleword")
-    #parser.add_argument("--n_classes", "-c", type=int, default=7, help="Number of classes")
-    #parser.add_argument("--network", default="resnetv2_50x1_bit.goog_in21k_ft_in1k", help="Which network to use")
-    #parser.add_argument("--val_size", type=float, default=0.1, help="Validation size (between 0 and 1)")
-    #parser.add_argument("--folder_name", default='', help="Used by the logger to save logs")
-    #parser.add_argument("--train_all", default=True, type=bool, help="If true, all network weights will be trained")
+    parser.add_argument("--n_classes", "-c", type=int, default=7, help="Number of classes")
+    parser.add_argument("--network", default="resnetv2_50x1_bit.goog_in21k_ft_in1k", help="Which network to use")
+    parser.add_argument("--val_size", type=float, default=0.1, help="Validation size (between 0 and 1)")
+    parser.add_argument("--folder_name", default='', help="Used by the logger to save logs")
+    parser.add_argument("--train_all", default=True, type=bool, help="If true, all network weights will be trained")
     parser.add_argument("--GPU_num", default="0", help="specify which GPU(s) to be used")
     parser.add_argument("--seed", type=int, default=0, help="seed")
-    parser.add_argument("--CLIP", default="ViT-B/16", help="CLIP model")
-    #parser.add_argument("--output_folder", default='run1', help="folder where to save results file")
-    #parser.add_argument("--output_file_name", default='.txt', help="results file name")
+    parser.add_argument("--CLIP", default="ViT-L/14", help="CLIP model")
+    parser.add_argument("--output_folder", default='run1', help="folder where to save results file")
+    parser.add_argument("--output_file_name", default='.txt', help="results file name")
     parser.add_argument("--data_path", default='', help="path of the dataset")
-    parser.add_argument("--number_style_words", "-n", default=5, help="number of stylewords to train")
+    parser.add_argument("--number_style_words", "-n", default=3, help="number of stylewords to train")
     parser.add_argument("--style_word_basis", default='a photo of a',
                         help="wordbasis for which stylewords are created, photo --> pseudoword")
     parser.add_argument("--style_word_index", default=1,
@@ -244,21 +244,12 @@ class Trainer:
         with torch.no_grad():
             self.clip_model.eval()
 
-
-        word_model = WordModel(self.clip_model, index_to_change=args.style_word_index+1,
-                               n_style_words=self.n_style_words, style_word_dim=self.text_feature_dim,
-                               word_basis=args.style_word_basis)
-        self.word_model = word_model.to(self.device)
-
-
-        self.test_data = CheapTestImageDataset(base_path="/home/robin/Documents/Domain_Generalization/data/"+args.dataset,
-                                    domains=args.target, class_names=self.args.classes)
-        self.dataloader = torch.utils.data.DataLoader(self.test_data, batch_size=args.batch_size, shuffle=True)
-        self.optimizer_sgd = torch.optim.SGD(word_model.parameters(),  momentum=0.9, lr=0.002)
-        self.lin_epochs = 100
-
-        self.current_epoch = 0
         self.target_name = target_name
+        self.test_data = CheapTestImageDataset(
+            base_path="/home/robin/Documents/Domain_Generalization/data/" + args.dataset,
+            domains=self.args.target, class_names=self.args.classes)
+        self.dataloader = torch.utils.data.DataLoader(self.test_data, batch_size=args.batch_size, shuffle=True)
+
     def _do_epoch(self):
         '''
             trains an epoch for pseudowords
@@ -287,6 +278,7 @@ class Trainer:
         from PIL import ImageFile, Image
         ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+        import numpy as np
         class_correct = 0
         data, class_l = features.to(self.device), labels.to(self.device)
 
@@ -305,45 +297,64 @@ class Trainer:
         return class_correct
 
     def do_training(self):
-        token_style_word_to_class = torch.cat([clip.tokenize(f"{self.args.style_word_basis} {c}.") for c in self.args.classes]).to(
-           self.device)
-        self.content_features_style_word = self.clip_model.encode_text(token_style_word_to_class).to(torch.float32).to(
-           self.device)
+        word_basises = ["a photo of a", "a nice photo of a", "a photo of the large"]#, "a wildlife camera recording of a"] # #a wildlife [photography] of
+        pseudo_index = [2 ,2, 5, 4]
+        first_run = True
+        for change_index, word_basis in zip(pseudo_index,word_basises):
+            print("==========================   pseudo basis: " + word_basis + "  ; pseudo at index", change_index-1, " =====================================")
+            word_model = WordModel(self.clip_model, index_to_change=change_index,
+                                   n_style_words=self.n_style_words, style_word_dim=self.text_feature_dim,
+                                   word_basis=word_basis)
+            self.word_model = word_model.to(self.device)
 
 
-        train_noise = True
-        #print("init parameter", self.word_model.style_words)
-        if train_noise:
-            for self.n_style_vec in range(self.n_style_words):
-                for self.current_epoch in range(self.args.epochs):
-                    m_o = self._do_epoch()
+            self.optimizer_sgd = torch.optim.SGD(word_model.parameters(), momentum=0.9, lr=0.002)
+            self.lin_epochs = 100
 
-                print("training of style_word #" + str(self.n_style_vec) + " finished")
+            self.current_epoch = 0
 
 
-        final_style_words = self.word_model.style_words.detach().clone()
-        token_style_classes = torch.cat(
-            [clip.tokenize(f"{self.args.style_word_basis} {c}") for c in self.args.classes]).to(self.device)[:, None, :]
+            token_style_word_to_class = torch.cat([clip.tokenize(f"{self.args.style_word_basis} {c}.") for c in self.args.classes]).to(
+               self.device)
+            self.content_features_style_word = self.clip_model.encode_text(token_style_word_to_class).to(torch.float32).to(
+               self.device)
+
+
+            train_noise = True
+            #print("init parameter", self.word_model.style_words)
+            if train_noise:
+                for self.n_style_vec in range(self.n_style_words):
+                    for self.current_epoch in range(self.args.epochs):
+                        m_o = self._do_epoch()
+
+                    print("training of style_word #" + str(self.n_style_vec) + " finished")
+
+
+            #final_style_words = self.word_model.style_words.detach().clone()
+            final_style_content_dummy = self.word_model(self.args.classes, style_index=change_index)[1].detach().cpu().numpy()
+            if first_run:
+                final_style_content_words = final_style_content_dummy
+            else:
+                final_style_content_words = torch.cat(final_style_content_words, final_style_content_dummy)
 
         if self.args.save_style_words == "yes" or self.args.save_style_words == "extend":
             with torch.no_grad():
-                for class_token, class_X in zip(token_style_classes, self.args.classes):
-                    full_vecs = self.clip_model.encode_text(class_token, final_style_words, position_pseudo=self.args.style_word_index+1).detach().cpu().numpy()
+                for idx, class_X in enumerate(self.args.classes):
+                    full_vecs = final_style_content_words[:, idx, :]
 
                     pref = 'saved_prompts/'
-                    path_p2 =  self.args.dataset + "_" + class_X + "_" + self.args.CLIP + ".pickle"
-                    path = pref + path_p2.replace("/","")
+                    path_p2 = self.args.dataset + "_" + class_X + "_" + self.args.CLIP + ".pickle"
+                    path = pref + path_p2.replace("/", "")
 
                     if self.args.save_style_words == "extend":
-                        with open(path, 'rb') as handle: #with statement --> auto close
+                        with open(path, 'rb') as handle:  # with statement --> auto close
                             old_vecs = pickle.load(handle)
                         full_vecs = np.concatenate((old_vecs, full_vecs), axis=0)
 
-                    with open(path,  'wb') as handle:
+                    with open(path, 'wb') as handle:
                         pickle.dump(full_vecs, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
                 print("Word vectors saved \n", "=======================================", sep="")
-
 
 
 
@@ -356,24 +367,14 @@ class Trainer:
 
 
 
-        amount_of_vecs_per_class = 1 if self.args.dataset == "Officehome" else 5
-        style_content_features = (final_style_words.to(RAM_Device)[:amount_of_vecs_per_class, None, :]*0 + self.content_features_style_word.to(RAM_Device)[None, :, :]) #/ 4.0
-        print(token_style_classes.size(), final_style_words.size(), final_style_words[0].size())
-        with torch.no_grad():
-            sc_features = self.clip_model.encode_text(token_style_classes, final_style_words[0], position_pseudo=self.args.style_word_index+1).to(self.device)
-        #print("sc[0]", sc_features[0])
 
-        for i in range(1, final_style_words.size(0)):
-            with torch.no_grad():
-                sc_features = torch.cat((sc_features, self.clip_model.encode_text(token_style_classes, final_style_words[i], position_pseudo=self.args.style_word_index+1).to(self.device)))
-        sc_features = sc_features.to(torch.float32)
-
-        input = sc_features
+        input = torch.flatten(torch.tensor(final_style_content_words).to(RAM_Device), end_dim=1)
         targets = torch.tensor(range(len(self.content_features))).repeat( #1*len(flattened_sc_no)+
             len(input)//len(self.content_features), 1, 1).flatten().to(RAM_Device) # permute(1,0)
 
 
         self.input = input
+        print(input.size())
         self.lin_model = ArcFaceLinear(self.text_feature_dim, len(self.content_features)).to(self.device)
         lin_optimizer = torch.optim.SGD(self.lin_model.parameters(), lr=0.005, momentum=0.9)
 
@@ -499,15 +500,15 @@ def train_with_sweep():
     print(args.target)
     print("Classes are:", args.classes)
 
-    #now = datetime.now().strftime("%m-%d-%y_%H:%M:%S")
-    #output_file_name = now + '_' + args.dataset + ".txt"#'_' + args.target + '.txt'
-    #output_folder = os.path.join(os.getcwd(), 'results', args.output_folder)
-    #if os.path.exists(output_folder):
-    #    pass
-    #else:
-    #    os.makedirs(output_folder)
-    #args.output_file_name = os.path.join(output_folder, output_file_name)
-    #print("output results are saved at: {}".format(args.output_file_name))
+    now = datetime.now().strftime("%m-%d-%y_%H:%M:%S")
+    output_file_name = now + '_' + args.dataset + ".txt"#'_' + args.target + '.txt'
+    output_folder = os.path.join(os.getcwd(), 'results', args.output_folder)
+    if os.path.exists(output_folder):
+        pass
+    else:
+        os.makedirs(output_folder)
+    args.output_file_name = os.path.join(output_folder, output_file_name)
+    print("output results are saved at: {}".format(args.output_file_name))
 
     #for line in lines:
     #    eles = line.strip().split(' ')

@@ -35,7 +35,6 @@ def get_train_dataloader(args):
                 join(dirname(__file__), 'data_path_txt_lists', '%s_train.txt' % dname), args.val_size)
 
         train_dataset = JigsawIADataset(name_train, labels_train, args.data_path, img_transformer=img_transformer)
-
         datasets.append(train_dataset)
         val_datasets.append(
             JigsawTestIADataset(name_val, labels_val, args.data_path, img_transformer=get_val_transformer(args)))
@@ -47,10 +46,21 @@ def get_train_dataloader(args):
 
 
 def get_val_dataloader(args):
+    #try:
     if args.dataset == 'PACS':
         names, labels = _dataset_info(join(dirname(__file__), 'data_path_txt_lists', '%s_test_kfold.txt' % args.target))
     else:
         names, labels = _dataset_info(join(dirname(__file__), 'data_path_txt_lists', '%s_test.txt' % args.target))
+    #except:
+        #for dname in args.target:
+        #    if args.dataset == 'PACS':
+        #        names, labels = _dataset_info(
+        #            join(dirname(__file__), 'data_path_txt_lists', '%s_test_kfold.txt' % dname))
+        #        #name_val, labels_val = _dataset_info(
+        #        #    join(dirname(__file__), 'data_path_txt_lists', '%s_crossval_kfold.txt' % dname))
+        #    else:
+        #        name_train, name_val, labels_train, labels_val = get_split_dataset_info(
+        #            join(dirname(__file__), 'data_path_txt_lists', '%s_train.txt' % dname), args.val_size)
     img_tr = get_val_transformer(args)
     val_dataset = JigsawTestIADataset(names, labels, args.data_path, img_transformer=img_tr)
 
