@@ -12,7 +12,7 @@ import pickle
 
 def get_args():
     parser = argparse.ArgumentParser(description="Script to launch CLIP distillation")
-    parser.add_argument("--dataset", default="PACS")
+    parser.add_argument("--dataset", default="Terra")
     parser.add_argument("--Domain_ID", default=['sketch', 'photo', 'cartoon', 'art_painting'])
     parser.add_argument("--classes", default=["dog", "elephant", "giraffe", "guitar", "horse", "house", "person"])
     parser.add_argument("--batch_size", "-b", type=int, default=128, help="Batch size")
@@ -31,13 +31,14 @@ def get_args():
     parser.add_argument("--train_all", default=True, type=bool, help="If true, all network weights will be trained")
     parser.add_argument("--GPU_num", default="0", help="specify which GPU(s) to be used")
     parser.add_argument("--seed", type=int, default=0, help="seed")
-    parser.add_argument("--CLIP", default="ViT-B/16", help="CLIP model")
+    parser.add_argument("--CLIP", default="ViT-L/14", help="CLIP model")
     parser.add_argument("--output_folder", default='run1', help="folder where to save results file")
     parser.add_argument("--output_file_name", default='.txt', help="results file name")
     parser.add_argument("--data_path", default='', help="path of the dataset")
-    parser.add_argument("--number_style_words", "-n", default=1, help="number of stylewords for ech pseudo length to train")
-    parser.add_argument("--pseudo_lengths", default=[1], help="length of sequences pseudowords are trained for")
-    parser.add_argument("--class_words_index", "-ci", default=[[1]], help="indizes where to put class, poss values = 'all': every position, or a list of lists (for each pseudo_length) e.g [[0,1,2], [2]]")
+    parser.add_argument("--number_style_words", "-n", default=2, help="number of stylewords for ech pseudo length to train")
+    parser.add_argument("--position_varying_pseudo", "-pvp", default=[1, 2, 3], help="The position of the pseudoword that gets forced to be orthogonal to the corresponding similiar one")
+    parser.add_argument("--pseudo_lengths", default=[4, 4, 4], help="length of sequences pseudowords are trained for")
+    parser.add_argument("--class_words_index", "-ci", default=[4, 4, 4], help="indizes where to put class, poss values = 'all': every position, or a list of lists (for each pseudo_length) e.g [[0,1,2], [2]]")
     #parser.add_argument("--style_word_basis", default='a photo of a', help="wordbasis for which stylewords are created, photo --> pseudoword")
     #parser.add_argument("--style_word_index", default=1,
     #                    help="index of which word in style_word_basis shall be replaced by pseudoword; must be int in [0, len(style_word_basis)]")
@@ -51,11 +52,11 @@ def get_args():
 
 
 class WordModel(nn.Module):
-    def __init__(self, pseudoCLIP_model, class_word_index=[[0,1]], pseudo_lengths=[1], n_style_words_per_config=5, style_word_dim=512, n_classes=0, device="cuda"):
+    def __init__(self, pseudoCLIP_model, position_pseudo=0, class_word_index=1, pseudo_length=1, n_style_words_per_config=5, style_word_dim=512, n_classes=0, device="cuda"):
         super(WordModel, self).__init__()
 
-        length = np.max(pseudo_lengths)
-        self.style_words = torch.nn.Parameter((torch.randn((length, len(pseudo_lengths), length, n_style_words_per_config, style_word_dim), dtype=torch.float16)) * 0.001)#0.02 #adding promtstyler
+        #length = np.max(pseudo_lengths)
+        self.style_words = torch.nn.Parameter((torch.randn((pseudo_length, n_style_words_per_config, style_word_dim), dtype=torch.float16)) * 0.001)#0.02 #adding promtstyler
         #has potentially more entries in dim=2 than nessesairy --> MUST BE CONSIDERED for later steps (aka these entries ignored)
         self.style_words.requires_grad = True
 
@@ -65,7 +66,9 @@ class WordModel(nn.Module):
             param.requires_grad = False
 
         self.cw_index = class_word_index
-        self.pseudo_length = pseudo_lengths
+        self.pseudo_length = pseudo_length
+        self.pseudo_index = position_pseudo
+
         self.device = device
         self.n_style = n_style_words_per_config
         self.encode_dim = style_word_dim
@@ -73,63 +76,54 @@ class WordModel(nn.Module):
         with torch.no_grad():
             self.pseudo_clip_encoder.eval()
 
-            #self.style_dummy_token = clip.tokenize(self.basic_phrase).to(self.device).detach()
-    def forward(self, content_words, style_index=1):
+            self.style_dummy_token = clip.tokenize(" a"*self.pseudo_length).to(self.device).detach()
+    def forward(self, content_words):
         if self.n_classes == 0:
             self.n_classes = len(content_words)
 
-        #-- style_featuers = style_words flattened across first 3 dimensions
-        #print("cw index", self.cw_index)
-        #====================================
-        #storage efficient saving of style / style_content vectors, no need for seperation like this
-        style_content_features = torch.randn(
-            (np.max(self.pseudo_length), len(self.pseudo_length), np.max(self.pseudo_length), self.n_style, self.n_classes, self.encode_dim),
-            dtype=torch.float16).to(self.device)
-        style_features = torch.randn(
-            (np.max(self.pseudo_length), len(self.pseudo_length), np.max(self.pseudo_length), self.n_style, self.encode_dim),
-            dtype=torch.float16).to(self.device)
+        for n_vector in range(self.n_style):
+            style_feat = self.pseudo_clip_encoder.encode_text_multiple_pseudo(
+                self.style_dummy_token,
+                pseudowords=self.style_words[:, n_vector, :],
+                positions_pseudo=[i + 1 for i in range(self.pseudo_length)])
+            if n_vector == 0:
+                style_features = style_feat
+            else:
+                style_features = torch.cat((style_features, style_feat))
 
-        for pseudo_idx, pseudo_length in enumerate(self.pseudo_length):
-            for c_count, c_idx in enumerate(self.cw_index[pseudo_idx]):
-                for n_cont, content_word in enumerate(content_words):
-                    # -- STYLE CONTENT WORDS
-                    text = "a "* c_idx + content_word + " a" * max(pseudo_length-c_idx, 0) #-- "a" is an example word, doesnt matter which,could also be "cat"
-                    sc_token = clip.tokenize(text).to(self.device)
+        # -- STYLE CONTENT WORDS
+        for n_cont, content_word in enumerate(content_words):
+            text = "a "*self.cw_index + content_word + " a"*max(self.pseudo_length-self.cw_index, 0) #-- "a" is an example word, doesnt matter which,could also be "cat"
+            sc_token = clip.tokenize(text).to(self.device)
+            positions_pseudo = [i+1 for i in range(self.pseudo_length+1)] #+1 due to [start_token, a, b, c, d, end_token] in encode text
+            positions_pseudo.remove(self.cw_index+1)
 
-                    positions_pseudo = [i for i in range(pseudo_length)]
-                    if c_idx < pseudo_length:
-                        positions_pseudo[max(c_idx-1,0):] = list(np.array(positions_pseudo[max(c_idx-1,0):]) + 1) #positions_pseudo + [pseudo_length + 1]
+            for n_vector in range(self.n_style):
+                sc_feat = self.pseudo_clip_encoder.encode_text_multiple_pseudo(
+                                            sc_token,
+                                            pseudowords=self.style_words[:, n_vector, :],
+                                            positions_pseudo=positions_pseudo)
 
-                    for n_vector in range(self.n_style):
-                        #print(c_idx, pseudo_idx, pseudo_length, n_vector)
-                        #print(self.style_words.size())
-                        sc_feat = self.pseudo_clip_encoder.encode_text_multiple_pseudo(
-                                                    sc_token,
-                                                    pseudowords=self.style_words[c_idx, pseudo_idx, :pseudo_length, n_vector],
-                                                    positions_pseudo=positions_pseudo)[None, None, :, None, None, :]
-                        style_content_features[c_count, pseudo_idx, :np.max(self.pseudo_length), n_vector, n_cont, :] = sc_feat
-                        style_content_features[c_count, pseudo_idx, np.max(self.pseudo_length):, n_vector, n_cont, :] = 0 #all non needed = 0, --> no contribiution to style loss
+                if n_vector == 0:
+                    sub_style_content_features = sc_feat
+                else:
+                    sub_style_content_features = torch.cat((sub_style_content_features, sc_feat))
 
-                    # -- STYLE WORDS
-                    if n_cont == 0: #ugly way to out out of loop
-                        style_text = "a" * pseudo_length
-                        s_token = clip.tokenize(style_text).to(self.device)
 
-                        for n_vector in range(self.n_style):
-                            s_feat = self.pseudo_clip_encoder.encode_text_multiple_pseudo(
-                                                    s_token,
-                                                    pseudowords=self.style_words[c_idx, pseudo_idx, :pseudo_length, n_vector],
-                                                    positions_pseudo=positions_pseudo)[None, None, :, None, :]
-                            style_features[c_count, pseudo_idx, :np.max(self.pseudo_length), n_vector, :] = s_feat
-                            style_features[c_count, pseudo_idx, np.max(self.pseudo_length):, n_vector, :] = 0
+            if n_cont == 0:
+                style_content_features = sub_style_content_features[:, None,  :]
+            else:
+                style_content_features = torch.cat( (style_content_features, sub_style_content_features[:, None, :]), dim=1)
 
-        if torch.sum(torch.isnan(style_content_features)) >=1:
-            print("sc token", sc_token)
-            print("used style words", self.style_words[:style_index+1])
-            print("style-content features", style_content_features)
-            print("w.o. to float32", self.pseudo_clip_encoder.encode_text(sc_token, self.style_words[:style_index+1], position_pseudo=self.index, print_intermediate=True))
-            torch.save(self.style_words[:style_index+1], "values.pt")
-            exit()
+
+
+        #if torch.sum(torch.isnan(style_content_features)) >=1:
+        #    print("sc token", sc_token)
+        #    print("used style words", self.style_words[:style_index+1])
+        #    print("style-content features", style_content_features)
+         #   print("w.o. to float32", self.pseudo_clip_encoder.encode_text(sc_token, self.style_words[:style_index+1], position_pseudo=self.index, print_intermediate=True))
+          #  torch.save(self.style_words[:style_index+1], "values.pt")
+         #   exit()
         #style_features = torch.flatten(self.style_words, end_dim=2)
         return [style_features, style_content_features]
 
@@ -147,14 +141,11 @@ def style_loss(style_vec, style_index=1):
     else:
         loss = 0
 
-        #norm_i = torch.linalg.norm(style_vec[style_index])
-        #for j in range(0, style_index): orthogonal TO ALL
-        norms = [torch.linalg.norm(s_v_j) for s_v_j in style_vec]
-        for j in range(0, len(style_vec)):
-            for i in range(0, j):
-                loss += torch.abs(1./j * style_vec[j] @ style_vec[i] /
-                         (norms[j] * norms[i]))
-        loss /= len(style_vec)
+        norm_i = torch.linalg.norm(style_vec[style_index])
+        for j in range(0, style_index):
+            #loss += torch.abs(nn.CosineSimilarity)
+            loss += torch.abs(1./style_index * style_vec[style_index] @ style_vec[j] /
+                     (norm_i * torch.linalg.norm(style_vec[j])))
         return loss
 
 def content_loss(style_content_words, content_words, style_index=1, n_classes=7):
@@ -162,20 +153,14 @@ def content_loss(style_content_words, content_words, style_index=1, n_classes=7)
         loss to maximize cosine similarity with style_content_vector and corresponding content_vector while minimizing all other similarities
         - exp for softmax and log for loss scaling [0,1]-> [infty, 0]
     '''
-    ##-- no use of style_index
-    loss = 0
-    for idx in range(len(style_content_words)):
-        z = style_content_words[idx] @ content_words.T / (
-                torch.linalg.norm(style_content_words[idx], axis=-1) * torch.linalg.norm(content_words, axis=-1))
-        #z = style_content_words[style_index] @ content_words.T / (
-         #       torch.linalg.norm(style_content_words[style_index], axis=-1) * torch.linalg.norm(content_words, axis=-1))
-        z = torch.exp(z)
-        sum_z_imn = torch.sum(z, dim=-1)
+    z = style_content_words[style_index] @ content_words.T / (
+            torch.linalg.norm(style_content_words[style_index], axis=-1) * torch.linalg.norm(content_words, axis=-1))
+    z = torch.exp(z)
+    sum_z_imn = torch.sum(z, dim=-1)
 
-        z_diag = torch.diagonal(z, 0)
+    z_diag = torch.diagonal(z, 0)
 
-        loss += -1. / n_classes* torch.sum( torch.log(z_diag) - torch.log(sum_z_imn) )
-    loss /= len(style_content_words)
+    loss = -1. / n_classes* torch.sum( torch.log(z_diag) - torch.log(sum_z_imn) )
     return loss
 
 def style_content_loss(model_output, content_labels, style_index=1, n_classes=7):
@@ -259,22 +244,22 @@ class Trainer:
 
 
         # -- get class_words_index in a useful format
-        if isinstance(args.class_words_index, str):
-            #if args.class_words_index == "all": -- all strings will do 'all' at this point
-            args.class_words_index = [[i for i in range(k)] for k in args.pseudo_lengths]
-        elif isinstance(args.class_words_index, list): #and all(isinstance(x, int) for x in args.class_words_index):
-            for pseudo_idx, pseudo_length in enumerate(args.pseudo_lengths):
-                for i in range(len(args.class_words_index)): #only positive indize so every index is unique for a position
-                    if args.class_words_index[pseudo_idx][i] < 0:
-                        args.class_words_index[pseudo_idx][i] += args.pseudo_length
-                        args.class_words_index[pseudo_idx] = list(set(args.class_words_index[pseudo_idx])) #remove dublicates
-                if len(args.class_words_index) > pseudo_length + 1:
-                    print("Warning: class word index out of range (max=", args.pseudo_length + 1,") will be ignored: ", sep="", end="")
-                    for cw_idx in args.class_words_index:
-                        print(cw_idx, end=", ")
-                        args.class_words_index.remove(cw_idx)
-        else:
-            exit("class words index is neither 'all' nor a list of integer")
+        #if isinstance(args.class_words_index, str):
+        #    #if args.class_words_index == "all": -- all strings will do 'all' at this point
+        #    args.class_words_index = [[i for i in range(k)] for k in args.pseudo_lengths]
+        #elif isinstance(args.class_words_index, list): #and all(isinstance(x, int) for x in args.class_words_index):
+        #    for pseudo_idx, pseudo_length in enumerate(args.pseudo_lengths):
+        #        for i in range(len(args.class_words_index)): #only positive indize so every index is unique for a position
+        #            if args.class_words_index[pseudo_idx][i] < 0:
+         #               args.class_words_index[pseudo_idx][i] += args.pseudo_length
+         ##               args.class_words_index[pseudo_idx] = list(set(args.class_words_index[pseudo_idx])) #remove dublicates
+         #       if len(args.class_words_index) > pseudo_length + 1:
+         #           print("Warning: class word index out of range (max=", args.pseudo_length + 1,") will be ignored: ", sep="", end="")
+         #           for cw_idx in args.class_words_index:
+         #               print(cw_idx, end=", ")
+         #               args.class_words_index.remove(cw_idx)
+        #else:
+        #    exit("class words index is neither 'all' nor a list of integer")
 
 
         if args.dataset == "Terra":
@@ -290,16 +275,16 @@ class Trainer:
             self.clip_model.eval()
 
 
-        word_model = WordModel(self.clip_model, class_word_index=args.class_words_index, pseudo_lengths=args.pseudo_lengths,
-                               n_style_words_per_config=args.number_style_words, style_word_dim=self.text_feature_dim,
-                               n_classes=len(args.classes), device="cuda")
-        self.word_model = word_model.to(self.device)
+        #word_model = WordModel(self.clip_model, class_word_index=args.class_words_index, pseudo_lengths=args.pseudo_lengths,
+        #                       n_style_words_per_config=args.number_style_words, style_word_dim=self.text_feature_dim,
+        #                       n_classes=len(args.classes), device="cuda")
+        #self.word_model = word_model.to(self.device)
 
 
         self.test_data = CheapTestImageDataset(base_path="/home/robin/Documents/Domain_Generalization/data/"+args.dataset,
                                     domains=args.target, class_names=self.args.classes)
         self.dataloader = torch.utils.data.DataLoader(self.test_data, batch_size=args.batch_size, shuffle=True)
-        self.optimizer_sgd = torch.optim.SGD(word_model.parameters(),  momentum=0.9, lr=0.002)
+        #self.optimizer_sgd = torch.optim.SGD(word_model.parameters(),  momentum=0.9, lr=0.002)
         self.lin_epochs = 100
 
         self.current_epoch = 0
@@ -315,11 +300,11 @@ class Trainer:
 
         class_words = self.args.classes #torch.cat((self.args.classes, self.content_features_style_word), 0)[torch.randint(len(self.args.classes), (128,))]
         self.optimizer_sgd.zero_grad()
-        model_output = self.word_model(class_words, style_index=self.n_style_vec)
+        model_output = self.word_model(class_words)
         #print("og vs flat: [0]", model_output[0].size(), torch.flatten(model_output[0], end_dim=3).size())
         #print("og vs flat: [1]", model_output[1].size(), torch.flatten(model_output[1], end_dim=3).size())
-        model_output[0] = torch.flatten(model_output[0], end_dim=3)
-        model_output[1] = torch.flatten(model_output[1], end_dim=3) #e.g. 2,2,2,5,10,512 -> 40, 10, 512
+        #model_output[0] = torch.flatten(model_output[0], end_dim=3)
+        #model_output[1] = torch.flatten(model_output[1], end_dim=3) #e.g. 2,2,2,5,10,512 -> 40, 10, 512
         #print("og vs flat", model_output[1].size(), torch.flatten(model_output[1], end_dim=-2).size())
         word_loss = style_content_loss(model_output, self.content_features,
                                        style_index=self.n_style_vec, n_classes=len(self.args.classes))
@@ -355,47 +340,74 @@ class Trainer:
         return class_correct
 
     def do_training(self):
-        #token_style_word_to_class = torch.cat([clip.tokenize(f"{self.args.style_word_basis} {c}.") for c in self.args.classes]).to(
-        #   self.device)
-        #self.content_features_style_word = self.clip_model.encode_text(token_style_word_to_class).to(torch.float32).to(
-        #   self.device)
+
+        first_run = True
+        for pseudo_length, cw_idx, pos_var_pseudo in zip(self.args.pseudo_lengths, self.args.class_words_index, self.args.position_varying_pseudo):
+            first_intercept, second_intercept = min(cw_idx, pos_var_pseudo), max(cw_idx, pos_var_pseudo)
+            first_interceptor = "[orthogonal pseudo]" if first_intercept == pos_var_pseudo else "[class]"
+            second_interceptor= "[orthogonal pseudo]" if second_intercept== pos_var_pseudo else "[class]"
+
+            print("==========================   trained combination:   " "[X] "*first_intercept, first_interceptor,
+                  " [X]"*(second_intercept-first_intercept)+" ", second_interceptor, " =====================================", sep="")
+
+            #pseudoCLIP_model, position_pseudo = 0, class_word_index = 1, pseudo_length = 1, n_style_words_per_config = 5, style_word_dim = 512, n_classes = 0, device = "cuda"):
+            word_model = WordModel(self.clip_model,
+                                   position_pseudo=pos_var_pseudo,
+                                   class_word_index=cw_idx,
+                                   pseudo_length=pseudo_length,
+                                   n_style_words_per_config=self.args.number_style_words,
+                                   style_word_dim=self.text_feature_dim)
+            self.word_model = word_model.to(self.device)
+
+            self.optimizer_sgd = torch.optim.SGD(word_model.parameters(), momentum=0.9, lr=0.002)
+            self.lin_epochs = 100
+
+            self.current_epoch = 0
+
+            #token_style_word_to_class = torch.cat(
+            #    [clip.tokenize(f"{self.args.style_word_basis} {c}.") for c in self.args.classes]).to(
+            #    self.device)
+            #self.content_features_style_word = self.clip_model.encode_text(token_style_word_to_class).to(
+            #    torch.float32).to(
+            #    self.device)
+
+            train_noise = True
+            # print("init parameter", self.word_model.style_words)
+            if train_noise:
+                for self.n_style_vec in range(self.n_style_words):
+                    for self.current_epoch in range(self.args.epochs):
+                        m_o = self._do_epoch()
+
+                    print(" -- training of style_word #" + str(self.n_style_vec + 1) + " finished.")
+
+            # final_style_words = self.word_model.style_words.detach().clone()
+            final_style_content_dummy = self.word_model(self.args.classes)[1].detach().cpu().numpy()
+            if first_run:
+                final_style_content_words = final_style_content_dummy
+            else:
+                final_style_content_words = torch.cat(final_style_content_words, final_style_content_dummy)
 
 
-        train_noise = True
-        #print("init parameter", self.word_model.style_words)
-        if train_noise:
-            for self.n_style_vec in range(self.n_style_words):
-                for self.current_epoch in range(self.args.epochs):
-                    m_o = self._do_epoch()
 
-                print("training of style_word #" + str(self.n_style_vec) + " finished")
-
-
-        _ , final_style_content_words = self.word_model(self.args.classes)
-        flat_style_content = torch.flatten(final_style_content_words, end_dim=3)
 
         if self.args.save_style_words == "yes" or self.args.save_style_words == "extend":
             with torch.no_grad():
                 for idx, class_X in enumerate(self.args.classes):
-                    full_vecs = flat_style_content[:, idx, :]
+                    full_vecs = final_style_content_words[:, idx, :]
 
                     pref = 'saved_prompts/'
-                    path_p2 =  self.args.dataset + "_" + class_X + "_" + self.args.CLIP + ".pickle"
-                    path = pref + path_p2.replace("/","")
+                    path_p2 = self.args.dataset + "_" + class_X + "_" + self.args.CLIP + ".pickle"
+                    path = pref + path_p2.replace("/", "")
 
                     if self.args.save_style_words == "extend":
-                        with open(path, 'rb') as handle: #with statement --> auto close
+                        with open(path, 'rb') as handle:  # with statement --> auto close
                             old_vecs = pickle.load(handle)
                         full_vecs = np.concatenate((old_vecs, full_vecs), axis=0)
 
-                    with open(path,  'wb') as handle:
+                    with open(path, 'wb') as handle:
                         pickle.dump(full_vecs, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
                 print("Word vectors saved \n", "=======================================", sep="")
-
-
-
-
 
         #print(final_style_words)
         #exit()
@@ -403,13 +415,12 @@ class Trainer:
 
         RAM_Device = self.device if (self.args.dataset == "PACS" or self.args.dataset == "VLCS") else "cpu"
 
-
-        input = torch.flatten(final_style_content_words, end_dim=4)
+        self.input = torch.flatten(torch.tensor(final_style_content_words), end_dim=1)
+        input = self.input
         targets = torch.tensor(range(len(self.content_features))).repeat( #1*len(flattened_sc_no)+
             len(input)//len(self.content_features), 1, 1).flatten().to(RAM_Device) # permute(1,0)
 
 
-        self.input = input
         self.lin_model = ArcFaceLinear(self.text_feature_dim, len(self.content_features)).to(self.device)
         lin_optimizer = torch.optim.SGD(self.lin_model.parameters(), lr=0.005, momentum=0.9)
 
@@ -418,7 +429,7 @@ class Trainer:
         batch_size_to_remember = 128 if len(input)>128 else len(input)#32 if self.args.dataset == "Officehome" else 128
         batchsize = batch_size_to_remember
         for n_lin_epoch in range(self.lin_epochs):#15):#2*2*self.lin_epochs):
-            for batch_start in range(0, input.size(0), batchsize):
+            for batch_start in range(0, self.input.size(0), batchsize):
                 self.lin_model.train()
                 self.lin_model.zero_grad()
                 lin_optimizer.zero_grad()
@@ -429,6 +440,7 @@ class Trainer:
                 #torch.autograd.set_detect_anomaly(True)
                 randperm = torch.randperm(batchsize)
                 batch_in = (input[batch_start : batch_start+batchsize])[randperm].to(self.device).to(torch.float32)
+                print(targets.size())
                 batch_target = (targets[batch_start : batch_start+batchsize])[randperm].to(self.device)
                 lin_model_pred, weights = self.lin_model(batch_in)
 

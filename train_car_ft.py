@@ -31,7 +31,7 @@ def get_args():
     parser.add_argument("--jitter", default=0.0, type=float, help="Color jitter amount")
     parser.add_argument("--tile_random_grayscale", default=0.0, type=float, help="Chance of randomly greyscale")
     parser.add_argument("--learning_rate", "-l", type=float, default=.001, help="Learning rate")
-    parser.add_argument("--epochs", "-e", type=int, default=3, help="Number of epochs")
+    parser.add_argument("--epochs", "-e", type=int, default=20, help="Number of epochs")
     parser.add_argument("--n_classes", "-c", type=int, default=7, help="Number of classes")
     parser.add_argument("--network", default="resnetv2_50x1_bit.goog_in21k_ft_in1k", help="Which network to use")
     parser.add_argument("--val_size", type=float, default="0.1", help="Validation size (between 0 and 1)")
@@ -58,6 +58,10 @@ class Trainer:
     def __init__(self, args, device, tt, ww1, ww2, ww3, target_name):
         self.args = args
         self.device = device
+
+        clipper = args.CLIP.replace("/", "")
+        self.file_print = open(args.output_folder + "car_ft_"+args.word_mode+"_" + clipper + "_" + args.dataset, 'w',
+                               encoding="utf-8")
 
         self.clip_model, self.image_preprocess = clip.load(self.args.CLIP, device=self.device)
         self.clip_frozen, _ = clip.load(self.args.CLIP, device=self.device)
@@ -211,6 +215,8 @@ class Trainer:
                 #print("CLASS CORRECT", class_correct)
                 class_acc = float(class_correct) / total
                 print("Accuracies on "+phase+":", "\t", np.around(100*class_acc, 4),"%", sep="", end="")
+                self.file_print.write(
+                    "Accuracies on "+phase+":"+ "\t"+ str(np.around(100*class_acc, 4)) + "% \n")
                 #self.logger.log_test(phase, {"class": class_acc})
                 self.results[phase][self.current_epoch] = class_acc
         #print("========================================================")

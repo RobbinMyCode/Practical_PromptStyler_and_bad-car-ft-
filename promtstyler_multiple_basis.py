@@ -35,7 +35,7 @@ def get_args():
     parser.add_argument("--output_folder", default='run1', help="folder where to save results file")
     parser.add_argument("--output_file_name", default='.txt', help="results file name")
     parser.add_argument("--data_path", default='', help="path of the dataset")
-    parser.add_argument("--number_style_words", "-n", default=3, help="number of stylewords to train")
+    parser.add_argument("--number_style_words", "-n", default=2, help="number of stylewords to train")
     parser.add_argument("--style_word_basis", default='a photo of a',
                         help="wordbasis for which stylewords are created, photo --> pseudoword")
     parser.add_argument("--style_word_index", default=1,
@@ -52,7 +52,17 @@ def get_args():
 
 
 class WordModel(nn.Module):
-    def __init__(self, pseudoCLIP_model, index_to_change=2, word_basis="a photo of a", n_style_words=80, style_word_dim=512, device="cuda", style_words_to_load=None):
+    def __init__(self, pseudoCLIP_model, index_to_change=2, word_basis_start="a photo of a", word_basis_end="", n_style_words=80, style_word_dim=512, device="cuda", style_words_to_load=None):
+        '''
+        :param pseudoCLIP_model: clip model to use for encoding
+        :param index_to_change: index of word that shall be a pseudoword >0 = in start_phrase, <0 = negative from end phrase [-2] for "e a b c d"  ="c"
+        :param word_basis_start: prefix (poss including pseudoword dummy) for [class]
+        :param word_basis_end: postfix for [class] (can contain pseudo dummy)
+        :param n_style_words: number of stylewords to create for this template
+        :param style_word_dim: = embedding size of encoding (512 ViT-B/16, 726 ViT-L/14)
+        :param device: device to calculate, requires as style tokens are calculated in init (must be same as device of training)
+        :param style_words_to_load: -- optional: init values for stylewords, if None init as gaussian(0,0.001)
+        '''
         super(WordModel, self).__init__()
         if torch.is_tensor(style_words_to_load):
             self.style_words = style_words_to_load
@@ -67,11 +77,12 @@ class WordModel(nn.Module):
         #self.content_words = content_words
         self.index = index_to_change
         self.device = device
-        self.basic_phrase = word_basis
+        self.phrase_start = word_basis_start
+        self.phrase_end = word_basis_end
         with torch.no_grad():
             self.pseudo_clip_encoder.eval()
 
-            self.style_dummy_token = clip.tokenize(self.basic_phrase).to(self.device).detach()
+            self.style_dummy_token = clip.tokenize(word_basis_start + " " + word_basis_end).to(self.device).detach()
     def forward(self, content_words, style_index):
         #style_index = 3
         #print("content_words", content_words, "style index", style_index)
@@ -81,7 +92,7 @@ class WordModel(nn.Module):
                                                         position_pseudo=self.index).to(torch.float32).to(self.device)
 
         for n_cont, content_word in enumerate(content_words):
-            text = self.basic_phrase + " " + content_word
+            text = self.phrase_start + " " + content_word + " " + self.phrase_end
             #print(text)
             sc_token = clip.tokenize(text).to(self.device)
             if n_cont == 0:
@@ -297,14 +308,23 @@ class Trainer:
         return class_correct
 
     def do_training(self):
-        word_basises = ["a photo of a", "a nice photo of a", "a photo of the large"]#, "a wildlife camera recording of a"] # #a wildlife [photography] of
-        pseudo_index = [2 ,2, 5, 4]
+        if self.args.dataset == "Terra":
+            word_basises_start = ["a photo of a", "a nice photo of a", "a photo of the large", "a wildlife camera recording of a"] # #a wildlife [photography] of
+            word_basises_end = ["", "", "", ""]
+            pseudo_index = [2 ,2, 5, 4]
+        else:
+            word_basises_start = [self.args.style_word_basis]
+            word_basises_end = [""]
+            pseudo_index = [self.args.style_word_index+1]
+
         first_run = True
-        for change_index, word_basis in zip(pseudo_index,word_basises):
-            print("==========================   pseudo basis: " + word_basis + "  ; pseudo at index", change_index-1, " =====================================")
+        for change_index, wb_start, wb_end in zip(pseudo_index, word_basises_start, word_basises_end):
+            print("==========================   pseudo basis: " + wb_start + " [class] " +
+                  wb_end +" ; pseudo at index", change_index-1, " =====================================")
+
             word_model = WordModel(self.clip_model, index_to_change=change_index,
                                    n_style_words=self.n_style_words, style_word_dim=self.text_feature_dim,
-                                   word_basis=word_basis)
+                                   word_basis_start=wb_start, word_basis_end=wb_end)
             self.word_model = word_model.to(self.device)
 
 
@@ -327,7 +347,7 @@ class Trainer:
                     for self.current_epoch in range(self.args.epochs):
                         m_o = self._do_epoch()
 
-                    print("training of style_word #" + str(self.n_style_vec) + " finished")
+                    print(" -- training of style_word #" + str(self.n_style_vec+1) + " finished.")
 
 
             #final_style_words = self.word_model.style_words.detach().clone()

@@ -200,9 +200,11 @@ class CLIP_pseudo(clip.model.CLIP):
                 --> = "a <pseudoword_1> <pseudoword_2> a cat", use known words like 'photo' so encodings are to a single token (NOT 'asfhgajfNS' or alike)
         :return:
         '''
+        #print(pseudowords.size(), "\n ===", positions_pseudo)
         if len(pseudowords) != len(positions_pseudo):
             exit("PSEUDOCLIP ERROR: number of pseudowords and positions for them do not match")
         x = self.token_embedding(text).type(self.dtype)
+
         if len(pseudowords) != 0:
             for txt_idx in range(text.size(0)):
                 for n, (pseudoword, position_pseudo) in enumerate(zip(pseudowords, positions_pseudo)):

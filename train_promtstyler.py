@@ -10,9 +10,14 @@ import pseudoCLIP
 import numpy as np
 import pickle
 
+from PIL import ImageFile, Image
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+
 def get_args():
     parser = argparse.ArgumentParser(description="Script to launch CLIP distillation")
-    parser.add_argument("--dataset", default="Terra")
+    parser.add_argument("--dataset", default="PACS")
     #parser.add_argument("--Domain_ID", default=['sketch', 'photo', 'cartoon', 'art_painting'])
     #parser.add_argument("--classes", default=["dog", "elephant", "giraffe", "guitar", "horse", "house", "person"])
     parser.add_argument("--batch_size", "-b", type=int, default=128, help="Batch size")
@@ -23,7 +28,7 @@ def get_args():
     #parser.add_argument("--jitter", default=0.4, type=float, help="Color jitter amount")
     #parser.add_argument("--tile_random_grayscale", default=0.1, type=float, help="Chance of randomly greyscale")
     #parser.add_argument("--learning_rate", "-l", type=float, default=.001, help="Learning rate")
-    parser.add_argument("--epochs", "-e", type=int, default=175, help="Number of epochs for each styleword")
+    parser.add_argument("--epochs", "-e", type=int, default=100, help="Number of epochs for each styleword")
     #parser.add_argument("--n_classes", "-c", type=int, default=7, help="Number of classes")
     #parser.add_argument("--network", default="resnetv2_50x1_bit.goog_in21k_ft_in1k", help="Which network to use")
     #parser.add_argument("--val_size", type=float, default=0.1, help="Validation size (between 0 and 1)")
@@ -32,15 +37,15 @@ def get_args():
     parser.add_argument("--GPU_num", default="0", help="specify which GPU(s) to be used")
     parser.add_argument("--seed", type=int, default=0, help="seed")
     parser.add_argument("--CLIP", default="ViT-B/16", help="CLIP model")
-    #parser.add_argument("--output_folder", default='run1', help="folder where to save results file")
+    parser.add_argument("--output_folder", default='ps_orig', help="folder where to save results file")
     #parser.add_argument("--output_file_name", default='.txt', help="results file name")
     parser.add_argument("--data_path", default='', help="path of the dataset")
-    parser.add_argument("--number_style_words", "-n", default=5, help="number of stylewords to train")
-    parser.add_argument("--style_word_basis", default='a photo of a',
+    parser.add_argument("--number_style_words", "-n", default=80, help="number of stylewords to train")
+    parser.add_argument("--style_word_basis", default='a photo style of a',
                         help="wordbasis for which stylewords are created, photo --> pseudoword")
     parser.add_argument("--style_word_index", default=1,
                         help="index of which word in style_word_basis shall be replaced by pseudoword; must be int in [0, len(style_word_basis)]")
-    parser.add_argument("--save_style_words", default="yes",
+    parser.add_argument("--save_style_words", default="no",
                         help='''if 'yes' saves the style-context words as /saved_prompts/[dataset]_[class]_[CLIP model].pickle,
                                 if 'extend' extends the style-context words in /saved_prompts/[dataset]_[class]_[CLIP model].pickle by the newly created ones.
                                 saves are as numpy arrays''')
@@ -142,8 +147,11 @@ def content_loss(style_content_words, content_words, style_index=1, n_classes=7)
         loss to maximize cosine similarity with style_content_vector and corresponding content_vector while minimizing all other similarities
         - exp for softmax and log for loss scaling [0,1]-> [infty, 0]
     '''
+    #print(style_content_words.size(), content_words.size())
     z = style_content_words[style_index] @ content_words.T / (
             torch.linalg.norm(style_content_words[style_index], axis=-1) * torch.linalg.norm(content_words, axis=-1))
+    #print(z.size())
+    #exit()
     z = torch.exp(z)
     sum_z_imn = torch.sum(z, dim=-1)
 
@@ -220,6 +228,8 @@ def arcface_softmax(linear_output, linear_input, linear_weights, s=5, m=0.5):
 
 class Trainer:
     def __init__(self, args, device, target_name):
+        clipper = args.CLIP.replace("/", "")
+        self.file_print = open(args.output_folder+"_promtStylerOG_"+clipper+"_"+args.dataset, 'w', encoding="utf-8")
         self.args = args
         self.device = device
 
@@ -284,8 +294,6 @@ class Trainer:
         return model_output
 
     def do_test(self, features, labels, paths):
-        from PIL import ImageFile, Image
-        ImageFile.LOAD_TRUNCATED_IMAGES = True
 
         class_correct = 0
         data, class_l = features.to(self.device), labels.to(self.device)
@@ -400,6 +408,7 @@ class Trainer:
                 loss_af = arcface_loss(lin_model_pred, batch_in, weights, batch_target)
                 loss = 0 * torch.nn.CrossEntropyLoss()(lin_model_pred, batch_target) + 1 * loss_af#self.lin_model.arcface_loss(lin_model_pred, batch_target)
                 print(loss.cpu().detach().numpy(), torch.nn.CrossEntropyLoss()(lin_model_pred, batch_target).cpu().detach().numpy(), sep="; ", end="||")
+                self.file_print.write("linear loss:" +str(loss.cpu().detach().numpy()) +" "+ str(torch.nn.CrossEntropyLoss()(lin_model_pred, batch_target).cpu().detach().numpy())+"||")
                 loss.backward(retain_graph=True)
                 lin_optimizer.step()
                 batchsize = batch_size_to_remember
@@ -438,6 +447,7 @@ class Trainer:
                 intermediate_total += len(labels)
                 class_correct += self.do_test(features, labels, paths)
                 print("currently ", class_correct.cpu().detach().numpy(), "ouf of ", intermediate_total, " correct. (", class_correct.cpu().detach().numpy()/(intermediate_total)*100,"%)" )
+                self.file_print.write("Training Performance: "+ str(class_correct.cpu().detach().numpy())+ " ouf of "+str(intermediate_total) + " correct. (" + str(class_correct.cpu().detach().numpy()/(intermediate_total)*100)+"%) \n")
             print("total accuracy:", 1.0 * class_correct / total)
         # return
 
