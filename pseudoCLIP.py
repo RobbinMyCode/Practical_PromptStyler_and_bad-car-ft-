@@ -144,47 +144,45 @@ class CLIP_pseudo(clip.model.CLIP):
         x = self.token_embedding(text).type(self.dtype)  # [batch_size, n_ctx, d_model]
         if print_intermediate:
             print("token embedding", x, end="\n ======================== \n")
+
         #x = token_embedding same format as text but (e.g.)512 dim vector for each entry
-        y = x.clone()
+
         if len(pseudowords) != 0:
             if text.size(0) == 1:
                 for n, pseudoword in enumerate(pseudowords):
                     x[0, position_pseudo] = pseudoword
                     if n == 0:
-                        y = x
+                        y = x.clone()
                     else:
                         y = torch.cat((y,x), 0)
+
             else:
                 if len(pseudowords)==1:
-                    for idx in range(y.size(0)):
-                        y[idx, position_pseudo] = pseudowords[0]
+                    for idx in range(x.size(0)):
+                        x[idx, position_pseudo] = pseudowords[0]
                 if len(pseudowords.size())==1:
-                    for idx in range(y.size(0)): #if pseudowords are not shape (1, ...) but just (...)
-                        y[idx, position_pseudo] = pseudowords
-                if len(pseudowords)==y.size(0):
-                    for idx in range(y.size(0)):
-                        y[idx, position_pseudo] = pseudowords[idx]
-                if len(pseudowords)!=1 and len(pseudowords)!=y.size(0) and len(pseudowords.size()) != 1:
+                    for idx in range(x.size(0)): #if pseudowords are not shape (1, ...) but just (...)
+                        x[idx, position_pseudo] = pseudowords
+                if len(pseudowords)==x.size(0):
+                    for idx in range(x.size(0)):
+                        x[idx, position_pseudo] = pseudowords[idx]
+                if len(pseudowords)!=1 and len(pseudowords)!=x.size(0) and len(pseudowords.size()) != 1:
                     exit("Error in combining texts and pseudowords: Numbers of pseudowords and texts do not fit: "
                          "must be either equal (both n) or one must be =1 (other arbitrary =n)")
         if print_intermediate:
             print("with pseudowords \n", y, end="\n ======================== \n")
-        x = y + self.positional_embedding.type(self.dtype)
-        if print_intermediate:
-            print("with position embedding \n", x, end="\n ======================== \n")
+        if len(pseudowords)!= 0 and text.size(0)==1:
+            x = y + self.positional_embedding.type(self.dtype)
+        else:
+            x = x + self.positional_embedding.type(self.dtype)
+
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x)
-        if print_intermediate:
-            print("transformered \n", x, end="\n ======================== \n")
         x = x.permute(1, 0, 2)  # LND -> NLD
         x = self.ln_final(x).type(self.dtype)
-        if print_intermediate:
-            print("ln_final \n", x, end="\n ======================== \n")
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
-        if print_intermediate:
-            print("output \n", x, end="\n ======================== \n")
         return x
 
     def encode_text_multiple_pseudo(self, text, pseudowords=[], positions_pseudo=[2]):

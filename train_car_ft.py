@@ -215,8 +215,8 @@ class Trainer:
                 #print("CLASS CORRECT", class_correct)
                 class_acc = float(class_correct) / total
                 print("Accuracies on "+phase+":", "\t", np.around(100*class_acc, 4),"%", sep="", end="")
-                self.file_print.write(
-                    "Accuracies on "+phase+":"+ "\t"+ str(np.around(100*class_acc, 4)) + "% \n")
+                self.file_print.write(self.args.target+
+                    "__Accuracies on "+phase+":"+ "\t"+ str(np.around(100*class_acc, 4)) + "% \n")
                 #self.logger.log_test(phase, {"class": class_acc})
                 self.results[phase][self.current_epoch] = class_acc
         #print("========================================================")

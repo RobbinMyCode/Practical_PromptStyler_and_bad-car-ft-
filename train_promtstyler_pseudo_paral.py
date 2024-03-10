@@ -28,7 +28,7 @@ def get_args():
     #parser.add_argument("--jitter", default=0.4, type=float, help="Color jitter amount")
     #parser.add_argument("--tile_random_grayscale", default=0.1, type=float, help="Chance of randomly greyscale")
     #parser.add_argument("--learning_rate", "-l", type=float, default=.001, help="Learning rate")
-    parser.add_argument("--epochs", "-e", type=int, default=100, help="Number of epochs for each styleword")
+    parser.add_argument("--epochs", "-e", type=int, default=15, help="Number of epochs for each styleword")
     #parser.add_argument("--n_classes", "-c", type=int, default=7, help="Number of classes")
     #parser.add_argument("--network", default="resnetv2_50x1_bit.goog_in21k_ft_in1k", help="Which network to use")
     #parser.add_argument("--val_size", type=float, default=0.1, help="Validation size (between 0 and 1)")
@@ -40,7 +40,7 @@ def get_args():
     parser.add_argument("--output_folder", default='ps_orig', help="folder where to save results file")
     #parser.add_argument("--output_file_name", default='.txt', help="results file name")
     parser.add_argument("--data_path", default='', help="path of the dataset")
-    parser.add_argument("--number_style_words", "-n", default=80, help="number of stylewords to train")
+    parser.add_argument("--number_style_words", "-n", default=5, help="number of stylewords to train")
     parser.add_argument("--style_word_basis", default='a photo style of a',
                         help="wordbasis for which stylewords are created, photo --> pseudoword")
     parser.add_argument("--style_word_index", default=1,
@@ -49,7 +49,7 @@ def get_args():
                         help='''if 'yes' saves the style-context words as /saved_prompts/[dataset]_[class]_[CLIP model].pickle,
                                 if 'extend' extends the style-context words in /saved_prompts/[dataset]_[class]_[CLIP model].pickle by the newly created ones.
                                 saves are as numpy arrays''')
-    parser.add_argument("--save_lin_weights", default="True",
+    parser.add_argument("--save_lin_weights", default="false",
                         help="if True: save weights for linear mapping in /saved_prompts/[dataset]_weights_[CLIP model].pickle")
 
 
@@ -63,7 +63,9 @@ class WordModel(nn.Module):
             self.style_words = style_words_to_load
         else:
             self.style_words = torch.nn.Parameter((torch.randn((n_style_words, style_word_dim))) * 0.001)#0.02 #adding promtstyler
+            #self.style_words  = (torch.randn((n_style_words, style_word_dim))) * 0.001
         self.style_words.requires_grad = True
+
         #for encoding
         self.pseudo_clip_encoder = pseudoCLIP_model
         for name, param in self.pseudo_clip_encoder.named_parameters():
@@ -77,12 +79,21 @@ class WordModel(nn.Module):
             self.pseudo_clip_encoder.eval()
 
             self.style_dummy_token = clip.tokenize(self.basic_phrase).to(self.device).detach()
-    def forward(self, content_words, style_index):
+    def forward(self, content_words, style_index, copied_style_words=None):
+        if copied_style_words != None:
+            weird_style_index = style_index #max(0, style_index-1)
+            calc_style_words = torch.cat((copied_style_words[:weird_style_index], self.style_words[weird_style_index:]), dim=0)
+            #calc_style_words = torch.cat((copied_style_words[:0], self.style_words[0:]),
+            #                             dim=0)
+            #print(copied_style_words[:style_index])
+            #calc_style_words = self.style_words
+        else:
+            calc_style_words = self.style_words
         #style_index = 3
         #print("content_words", content_words, "style index", style_index)
         with torch.no_grad():
             style_features = self.pseudo_clip_encoder.encode_text(self.style_dummy_token,
-                                                        self.style_words,#[:style_index+1],
+                                                        calc_style_words,#[:style_index+1],
                                                         position_pseudo=self.index).to(torch.float32).to(self.device)
 
         for n_cont, content_word in enumerate(content_words):
@@ -92,7 +103,7 @@ class WordModel(nn.Module):
             if n_cont == 0:
                 #with torch.no_grad():
                 style_content_features = self.pseudo_clip_encoder.encode_text(sc_token,
-                                                        self.style_words,#[:style_index+1],
+                                                        calc_style_words,#[:style_index+1],
                                                         position_pseudo=self.index).to(torch.float32).to(self.device)
                 #if style_index==0:
                 #    style_content_features = style_content_features[None, :]
@@ -100,7 +111,7 @@ class WordModel(nn.Module):
                 style_content_features = style_content_features[:, None, :]
             else:
                 #with torch.no_grad():
-                sc_dummy = self.pseudo_clip_encoder.encode_text(sc_token, self.style_words,#[:style_index+1],
+                sc_dummy = self.pseudo_clip_encoder.encode_text(sc_token, calc_style_words,#[:style_index+1],
                                                                     position_pseudo=self.index).to(torch.float32).to("cuda")
                 #if style_index==0:
                 #    sc_dummy = sc_dummy[None, :]
@@ -131,7 +142,7 @@ class ArcFaceLinear(nn.Module):
 
 def style_loss(style_vec, style_index=1):
     if style_index == 0:
-        return 0
+        return torch.tensor(0)
     else:
         loss = 0
 
@@ -148,6 +159,7 @@ def content_loss(style_content_words, content_words, style_index=1, n_classes=7)
         - exp for softmax and log for loss scaling [0,1]-> [infty, 0]
     '''
     #print(style_content_words.size(), content_words.size())
+    #print("used style_content_word", style_content_words[style_index])
     z = style_content_words[style_index] @ content_words.T / (
             torch.linalg.norm(style_content_words[style_index], axis=-1) * torch.linalg.norm(content_words, axis=-1))
     #print(z.size())
@@ -157,12 +169,19 @@ def content_loss(style_content_words, content_words, style_index=1, n_classes=7)
 
     z_diag = torch.diagonal(z, 0)
 
+
     loss = -1. / n_classes* torch.sum( torch.log(z_diag) - torch.log(sum_z_imn) )
+    #print("content loss = ", loss)
     return loss
 
-def style_content_loss(model_output, content_labels, style_index=1, n_classes=7):
-    loss = content_loss(model_output[1], content_labels, style_index, n_classes) + style_loss(model_output[0], style_index)
-    #loss += style_loss(model_output[2], style_index)
+def style_content_loss(model_output, content_labels, style_index=0, n_classes=7, verbose=1):
+    loss_content = content_loss(model_output[1], content_labels, style_index, n_classes)
+    loss_style = style_loss(model_output[0], style_index)
+
+    loss = loss_content + loss_style
+    if verbose == 1:
+        print("", end="\r")
+        print("loss: ", loss.detach().cpu().numpy(), "\t style loss:", loss_style.detach().cpu().numpy(), "content loss", loss_content.detach().cpu().numpy(), end="\t")
     if torch.isnan(loss):
         print(loss)
         exit("nan loss occured")
@@ -261,10 +280,11 @@ class Trainer:
         self.word_model = word_model.to(self.device)
 
 
+
         self.test_data = CheapTestImageDataset(base_path="/home/robin/Documents/Domain_Generalization/data/"+args.dataset,
                                     domains=args.target, class_names=self.args.classes)
         self.dataloader = torch.utils.data.DataLoader(self.test_data, batch_size=args.batch_size, shuffle=True)
-        self.optimizer_sgd = torch.optim.SGD(word_model.parameters(),  momentum=0.9, lr=0.002)
+        self.optimizer_sgd = torch.optim.SGD([self.word_model.style_words],  momentum=0.9, lr=0.002)
         self.lin_epochs = 100
 
         self.current_epoch = 0
@@ -279,18 +299,32 @@ class Trainer:
 
         class_words = self.args.classes #torch.cat((self.args.classes, self.content_features_style_word), 0)[torch.randint(len(self.args.classes), (128,))]
         self.optimizer_sgd.zero_grad()
-        model_output = self.word_model(class_words, style_index=self.n_style_vec)
+        model_output = self.word_model(class_words, style_index=self.n_style_vec, copied_style_words=self.word_model.style_words.clone().detach())
+        #detached_output = [model_output[0][:self.n_style_vec].detach(), model_output[1][:self.n_style_vec].detach()]
+        #loss_calcer = [torch.cat((detached_output[0], model_output[0][self.n_style_vec:]), axis=0), torch.cat((detached_output[1], model_output[1][self.n_style_vec:]), axis=0)]
+        #print("model out", model_output[0][:, :5], "\n", model_output[1][:, :5], "\n \n")
         word_loss = style_content_loss(model_output, self.content_features,
                                        style_index=self.n_style_vec, n_classes=len(self.args.classes))
+        #word_loss = torch.nn.CrossEntropyLoss()(loss_calcer[1], torch.sqrt(loss_calcer[1])+1)
 
+        #self.word_model.style_words[:self.n_style_vec].detach()
+        #unchanging = self.word_model.style_words[:self.n_style_vec]
+        #word_loss.backward()
+        #style_vecs_before = self.word_model.style_words
         if self.current_epoch == self.args.epochs and self.n_style_vec == self.n_style_words -1:
             word_loss.backward(retain_graph=False)
         else:
             word_loss.backward(retain_graph=True)
+
+        #print(self.word_model.style_words.grad, "\n", self.n_style_vec)
+        #if self.n_style_vec == 3:
+        #    exit()
+        #for idx in range(self.n_style_vec):
+
         self.optimizer_sgd.step()
         self.word_model.eval()
-
-        print('|', end='', sep='')
+        #self.word_model.style_words[:self.n_style_vec] += unchanging - self.word_model.style_words[:self.n_style_vec]
+        #print('|', end='', sep='')
         return model_output
 
     def do_test(self, features, labels, paths):
@@ -321,12 +355,14 @@ class Trainer:
 
         train_noise = True
         #print("init parameter", self.word_model.style_words)
+        print("init style words [:3]", self.word_model.style_words[:, :3])
         if train_noise:
             for self.n_style_vec in range(self.n_style_words):
                 for self.current_epoch in range(self.args.epochs):
                     m_o = self._do_epoch()
 
                 print("training of style_word #" + str(self.n_style_vec) + " finished")
+                print("style words [:3]", self.word_model.style_words[:, :3])
 
 
         final_style_words = self.word_model.style_words.detach().clone()
