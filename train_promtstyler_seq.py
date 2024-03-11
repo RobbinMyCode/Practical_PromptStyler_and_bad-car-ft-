@@ -18,7 +18,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 def get_args():
     parser = argparse.ArgumentParser(description="Script to launch CLIP distillation")
-    parser.add_argument("--dataset", default="Terra")
+    parser.add_argument("--dataset", default="PACS")
     #parser.add_argument("--Domain_ID", default=['sketch', 'photo', 'cartoon', 'art_painting'])
     #parser.add_argument("--classes", default=["dog", "elephant", "giraffe", "guitar", "horse", "house", "person"])
     parser.add_argument("--batch_size", "-b", type=int, default=128, help="Batch size")

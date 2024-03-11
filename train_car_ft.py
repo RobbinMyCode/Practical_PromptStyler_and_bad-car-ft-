@@ -4,15 +4,15 @@ import torch
 import clip
 from torch import nn
 from torch.nn import functional as F
-from data import data_helper
-from optimizer.optimizer_helper import get_optim_and_scheduler
-from utils.Logger import Logger
+#from data import data_helper
+#from optimizer.optimizer_helper import get_optim_and_scheduler
+#from utils.Logger import Logger
 from datetime import datetime
-from timm.models import create_model
+#from timm.models import create_model
 import pickle
-import itertools
+#import itertools
 import numpy as np
-import time
+#import time
 from image_loader import CheapTestImageDataset
 from PIL import ImageFile, Image
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -260,7 +260,7 @@ class Trainer:
         return class_correct
 
     def do_training(self):
-        self.logger = Logger(self.args, update_frequency=30)
+        #self.logger = Logger(self.args, update_frequency=30)
         self.results = {"val": torch.zeros(self.args.epochs), "test": torch.zeros(self.args.epochs)}
         for self.current_epoch in range(self.args.epochs):
             #self.logger.new_epoch(self.scheduler.get_last_lr())
@@ -273,8 +273,8 @@ class Trainer:
         idx_best = val_res.argmax()
         print("Best val %g, corresponding test %g - best test: %g, best epoch: %g" % (
         val_res.max(), test_res[idx_best], test_res.max(), idx_best))
-        self.logger.save_best(test_res[idx_best], test_res.max())
-        return self.logger
+        #self.logger.save_best(test_res[idx_best], test_res.max())
+        return #self.logger
 
 
 def train_with_sweep():
