@@ -45,6 +45,7 @@ def get_args():
     parser.add_argument("--data_path", default='../data', help="path of the dataset")
     parser.add_argument("--prompts_file", default="", help="the pickle-file in which the prompt (already encoded) are [required for weight init], if no file given, use 'a style of a [class]'")
     parser.add_argument("--word_mode", default="mean", help="how the finetuning is computed a) mean [=default]: average all word vectors and finetune the representation b) linear: [=words are more important]: connect all word vectors with a linear layer and finetune those weights")
+    parser.add_argument("--KL_factor", default=0.1)
     return parser.parse_args()
 
 
@@ -189,7 +190,7 @@ class Trainer:
                                log_target=True,
                                reduction='batchmean')
 
-            loss = kl_loss + CrossEntropyLoss
+            loss = self.args.KL_factor *kl_loss + CrossEntropyLoss
             loss.backward()
             self.optimizer.step()
 
