@@ -37,11 +37,11 @@ def get_args():
     #parser.add_argument("--train_all", default=True, type=bool, help="If true, all network weights will be trained")
     parser.add_argument("--GPU_num", default="0", help="specify which GPU(s) to be used")
     parser.add_argument("--seed", type=int, default=0, help="seed")
-    parser.add_argument("--CLIP", default="ViT-L/14", help="CLIP model")
+    parser.add_argument("--CLIP", default="ViT-B/16", help="CLIP model")
     parser.add_argument("--output_folder", default='ps_orig', help="folder where to save results file")
     #parser.add_argument("--output_file_name", default='.txt', help="results file name")
     parser.add_argument("--data_path", default='', help="path of the dataset")
-    parser.add_argument("--number_style_words", "-n", default=80, help="number of stylewords to train")
+    parser.add_argument("--number_style_words", "-n", default=5, help="number of stylewords to train")
     parser.add_argument("--style_word_basis", default='a photo style of a',
                         help="wordbasis for which stylewords are created, photo --> pseudoword")
     parser.add_argument("--style_word_index", default=1,

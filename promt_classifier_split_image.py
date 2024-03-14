@@ -15,13 +15,13 @@ import numpy as np
 #import time
 from image_loader import *
 import torchvision
-from PIL import ImageFile, Image
-from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
-ImageFile.LOAD_TRUNCATED_IMAGES = True
-
+from PIL import Image
+from itertools import product
+#ImageFile.LOAD_TRUNCATED_IMAGES = True
+import matplotlib.pyplot as plt
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Script to launch CAR-FT")
+    parser = argparse.ArgumentParser(description="Makes multiplre predictions from a known linear model (e.g. made by promtstyler); joining the predictions to a new one")
     parser.add_argument("--dataset", default="Terra")
     parser.add_argument("--Domain_ID", default=['sketch', 'photo', 'cartoon', 'art_painting'])
     parser.add_argument("--classes", default=["dog", "elephant", "giraffe", "guitar", "horse", "house", "person"])
@@ -33,7 +33,7 @@ def get_args():
     parser.add_argument("--jitter", default=0.0, type=float, help="Color jitter amount")
     parser.add_argument("--tile_random_grayscale", default=0.0, type=float, help="Chance of randomly greyscale")
     parser.add_argument("--learning_rate", "-l", type=float, default=.001, help="Learning rate")
-    parser.add_argument("--epochs", "-e", type=int, default=20, help="Number of epochs")
+    parser.add_argument("--epochs", "-e", type=int, default=1, help="Number of epochs")
     parser.add_argument("--n_classes", "-c", type=int, default=7, help="Number of classes")
     parser.add_argument("--network", default="resnetv2_50x1_bit.goog_in21k_ft_in1k", help="Which network to use")
     parser.add_argument("--val_size", type=float, default="0.1", help="Validation size (between 0 and 1)")
@@ -41,7 +41,7 @@ def get_args():
     parser.add_argument("--train_all", default=True, type=bool, help="If true, all network weights will be trained")
     parser.add_argument("--GPU_num", default="0", help="specify which GPU(s) to be used")
     parser.add_argument("--seed", type=int, default=0, help="seed")
-    parser.add_argument("--CLIP", default="ViT-B/16", help="CLIP model")
+    parser.add_argument("--CLIP", default="ViT-L/14", help="CLIP model")
     parser.add_argument("--output_folder", default='run1', help="folder where to save results file")
     parser.add_argument("--output_file_name", default='.txt', help="results file name")
     parser.add_argument("--data_path", default='../data', help="path of the dataset")
@@ -57,64 +57,55 @@ def repackage_hidden(h):
         return torch.autograd.Variable(h.data)
     else:
         return tuple(repackage_hidden(v) for v in h)
+
+
+def tile(filePath, d): #does not generalize yet, # fragments needs to be adapted according to --image_size and self.img_dims
+    name, ext = os.path.splitext(filePath)
+    img = Image.open(filePath)
+    w, h = img.size
+
+    grid = product(range(0, h - h % d, d), range(0, w - w % d, d))
+    fragments = [img]*13
+    for i, j in grid:
+        box = (j, i, j + d, i + d)
+        fragments[4*i//d+j//d +1] = img.crop(box)#.save(out)
+        #plt.imshow(img)
+        #plt.show()
+    return fragments
+
+
+
+
 class Trainer:
     def __init__(self, args, device, tt, ww1, ww2, ww3, target_name):
         self.args = args
         self.device = device
 
         clipper = args.CLIP.replace("/", "")
-        self.file_print = open(args.output_folder + "car_ft_"+args.word_mode+"_" + clipper + "_" + args.dataset, 'w',
+        self.file_print = open(args.output_folder + "image_splitter_"+args.word_mode+"_" + clipper + "_" + args.dataset, 'w',
                                encoding="utf-8")
+        if args.dataset == "Terra":
+            self.img_dims=[1024, 747]
+            self.n_splits = 13
+        else:
+            print("please define img dims/number splits for the dataset you use [__init__ at like line 8]")
+            exit(1)
 
         self.clip_model, self.image_preprocess = clip.load(self.args.CLIP, device=self.device)
-        self.image_preprocess_training = Compose([
-                torchvision.transforms.RandomResizedCrop(args.image_size, interpolation=BICUBIC),
-                torchvision.transforms.RandomHorizontalFlip(),
-                #CenterCrop(args.image_size),
-                lambda image: image.convert("RGB"),
-                ToTensor(),
-                Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
-            ])
-        self.clip_frozen, _ = clip.load(self.args.CLIP, device=self.device)
-        for name, param in self.clip_frozen.named_parameters():
+        for param in self.clip_model.parameters():
             param.requires_grad = False
 
-        self.text_feature_dim = 512
-        # ---CLIP prompt engineering
+        clip_name_loadable = self.args.CLIP.replace("/", "")
+        with open("saved_prompts/" + args.dataset + "_weights_" + clip_name_loadable + ".pickle", 'rb') as fp:
+            self.lin_projection_weights = torch.tensor(pickle.load(fp), requires_grad=False, device=self.device, dtype=torch.float16)
 
 
-        if args.dataset == "Terra":
-            self.text_anchor = ['bright photo', 'corrupted photo', 'dark photo', 'good photo']
-        elif args.dataset == "VLCS":
-            self.text_anchor = ['bright photo', 'corrupted photo', 'dark photo', 'good photo']
-        else:
-            self.text_anchor = args.Domain_ID
+        weight_init = np.ones((self.n_splits, 1))
+        #for idx in range(len(weight_init)):
+        #    weight_init[idx] *= 1 - (idx+1)/self.n_splits
+        self.combination_weights = torch.nn.Parameter(torch.tensor(weight_init, requires_grad=True, device=self.device, dtype=torch.float16))
 
 
-        for iteration, classname in enumerate(args.classes):
-            clip_name_loadable = self.args.CLIP.replace("/","")
-            try:
-                with open("saved_prompts/"+args.dataset+"_"+classname+"_"+clip_name_loadable+".pickle", 'rb') as fp:
-                    weights = pickle.load(fp)
-                print("loading of "+ "'saved_prompts/"+args.dataset+"_"+classname+"_"+clip_name_loadable+".pickle' successful!" )
-            except:
-                with torch.no_grad():
-                    self.clip_model.eval()
-                    weights = self.clip_model.encode_text(torch.cat([clip.tokenize(f"a {dID} of a {classname}.") for dID in self.text_anchor]).to(self.device)).detach().cpu().numpy()
-            #cls: 512 x n_cat (W = n_class x n_text_anchor x 512 ; n_class only later "weights"=n_text_anchor x 512
-            #ctx: 512 x n_text anchors
-            if iteration == 0:
-                weight_total = weights[None, :, :]
-            else:
-                weight_total = np.concatenate((weight_total, weights[None, :, :]), axis=0)
-
-        self.WEIGHTS = torch.nn.Parameter(torch.tensor(weight_total, requires_grad=True, device=self.device, dtype=torch.float16))
-        if args.word_mode == "linear":
-            self.linear_weight_cls = torch.nn.Parameter(1. / weight_total.shape[1] * torch.ones((weight_total.shape[1], 1), device=self.device,
-                                                                    dtype=torch.float16, requires_grad=True))
-            self.linear_weight_ctx = torch.nn.Parameter(1. / weight_total.shape[0] * torch.ones((weight_total.shape[0], 1) , device=self.device,
-                                                                    dtype=torch.float16, requires_grad=True))
-            self.WEIGHTS.requires_grad = False
 
         self.train_data = CheapTestImageDataset(
             base_path="../data/" + args.dataset,
@@ -126,11 +117,6 @@ class Trainer:
             domains=args.target, class_names=self.args.classes)
         self.test_loader = torch.utils.data.DataLoader(self.test_data, batch_size=args.batch_size, shuffle=True)
 
-        self.comparison_data = CheapTestImageDataset_image_outs(
-            base_path="../data/" + args.dataset, args=args,
-            domains=args.source, class_names=self.args.classes)
-        self.comparison_loader = torch.utils.data.DataLoader(self.comparison_data, batch_size=args.batch_size, shuffle=True)
-
 
         #self.source_loader, self.val_loader = data_helper.get_train_dataloader(args)
         #self.target_loader = data_helper.get_val_dataloader(args)
@@ -139,8 +125,7 @@ class Trainer:
         print("Dataset size: train %d,  test %d" % (
                 self.train_data.__len__(), self.test_data.__len__()))
 
-        params = [param for param in self.clip_model.parameters()]+[self.WEIGHTS]
-        self.optimizer = torch.optim.SGD(params, lr=5e-06*(args.batch_size/64), weight_decay=0.1)
+        self.optimizer = torch.optim.SGD([self.combination_weights], lr=5e-03*(args.batch_size/64), weight_decay=0.1)
         #self.optimizer = torch.optim.AdamW(params, lr=5*10**-6*(args.batch_size/64), weight_decay=0.1)
         #self.optimizer, self.scheduler = get_optim_and_scheduler(self.model, args.epochs, args.learning_rate, args.train_all,
         #                                                         nesterov=False)
@@ -155,74 +140,72 @@ class Trainer:
         n_corr = 0
         #for execution_nr in range(self.dataloader.__len__()):  # complex way to write sample ove rall samples
         #_, labels, _, paths = next(iter(self.dataloader))
-
+        n_samples = 0
         for it, (_, class_l, _, paths) in enumerate(self.source_loader):
             class_l = class_l.to(self.device)
-            loop_start = time.time()
+            break
             for i, path in enumerate(paths):
-                #print(i, path)
-
-
-                image = Image.open(path)
-
-                #
+                #image = Image.open(path)
+                frags = tile(path, d=224)
                 #image = torchvision.io.read_image(path)
-                data_n = self.image_preprocess_training(image).to(self.device).unsqueeze(0)
+                for frag_idx, image in enumerate(frags):
+                    n_samples+=1
+                    data_n = self.image_preprocess(image).to(self.device).unsqueeze(0)
+                    CLIP_image_features = self.clip_model.encode_image(data_n).type(torch.float16).to(self.device)
+
+                    encoding_i = (CLIP_image_features @ self.lin_projection_weights.T)
+                    if frag_idx == 0:
+                        encodings = encoding_i
+                    else:
+                        encodings = torch.cat((encodings, encoding_i), dim=0)
+
+                #-- sort outputs by entropy --> lowest first index and so on ==> very certain estimates are at low index
+
+                # if terra: dont use empty as much will be empty
+                if self.args.dataset == "Terra":
+                    rank_encodings = torch.cat((torch.nn.Softmax(dim=-1)(encodings[:, :5]), torch.nn.Softmax(dim=-1)(encodings[:, 6:])), dim=1)
+                else:
+                    rank_encodings = torch.nn.Softmax(dim=-1)(encodings)
+                # Entropy = - \sum_p log_2(p) * p    #probability interpretation makes sense as we used softmax beforea
+
+                entropies = -1* torch.sum(torch.log2(rank_encodings)*rank_encodings, dim=-1)
+                _, indices = torch.sort(entropies)
+                #print(entropies.size(), encodings.size())
+                encodings = encodings[indices] * entropies[indices[0]]/entropies[indices, None]
+
+                #--mapping to a single output with self.combination_weights
+                outputs = torch.nn.Softmax(dim=-1)(self.combination_weights.T @ encodings)
+
+                #data, class_l, d_idx = data.to(self.device), class_l.to(self.device), d_idx.to(self.device)
+                torch.autograd.set_detect_anomaly(True)
 
                 if i == 0:
-                    data = data_n
+                    output_list = outputs
                 else:
-                    data = torch.cat((data, data_n), dim=0)
-
-
-            CLIP_image_features = self.clip_model.encode_image(data).type(torch.float32).to(self.device)
-            frozen_image = self.clip_frozen.encode_image(data)
-            #data, class_l, d_idx = data.to(self.device), class_l.to(self.device), d_idx.to(self.device)
-            torch.autograd.set_detect_anomaly(True)
-
+                    output_list = torch.cat((output_list, outputs), dim=0)
             # Calculate features
             self.clip_model.eval()
-            #CLIP_image_features = self.clip_model.encode_image(data)
-            CLIP_image_features_norm = CLIP_image_features / CLIP_image_features.norm(dim=-1, keepdim=True)
 
-            with torch.no_grad():
-                #frozen_image = self.clip_frozen.encode_image(data)
-                frozen_image_norm = frozen_image / frozen_image.norm(dim=-1, keepdim=True)
-
-            if self.args.word_mode == "mean":
-                self.weights_cls = torch.sum(self.WEIGHTS, axis=1) / self.WEIGHTS.size(1)
-                self.weights_ctx = torch.sum(self.WEIGHTS, axis=0) / self.WEIGHTS.size(0)
-
-            p_ctx_changing = softmax(cos_sim(CLIP_image_features_norm[:, None, :], self.weights_ctx[None, :, :]))
-            p_ctx_stationary = softmax((cos_sim(frozen_image_norm[:, None, :], self.weights_ctx[None, :, :])).type(torch.float32))
-            cls_changing = cos_sim(CLIP_image_features_norm[:, None, :], self.weights_cls[None, :, :]).type(torch.float32)
 
             self.optimizer.zero_grad()
 
             # --- classification loss
-            CrossEntropyLoss = CELoss(cls_changing, class_l)
-            # --- kl loss
-            log_changing = torch.log(p_ctx_changing)
-            log_stat  = torch.log(p_ctx_stationary)
-            kl_loss = F.kl_div(log_stat,
-                               log_changing,
-                               log_target=True,
-                               reduction='batchmean')
+            CrossEntropyLoss = CELoss(output_list, class_l)
 
-            loss = self.args.KL_factor *kl_loss + CrossEntropyLoss
+            loss = CrossEntropyLoss
             loss.backward()
             self.optimizer.step()
 
             # --- state of training print
-            correct_class = torch.argmax(cls_changing, dim=-1)==class_l
+            correct_class = torch.argmax(output_list, dim=-1)==class_l
             print("\r", end="")
             n_corr +=  torch.sum(correct_class).cpu().detach().numpy()
-            print((it+1)*len(class_l)," / ", len(self.source_loader.dataset), ": ",
-                  np.around(100*(it+1)*len(class_l)/len(self.source_loader.dataset), 4), "%  of epoch done.",
+            print((it + 1) * len(class_l), " / ", len(self.source_loader.dataset), ": ",
+                  np.around(100 * (it + 1) * len(class_l) / len(self.source_loader.dataset), 4), "%  of epoch done.",
                   " Accuracy(batch)=",
-                  np.around((100*torch.sum(correct_class)/len(class_l)).cpu().detach().numpy(),4),"%",
+                  np.around((100 * torch.sum(correct_class) / len(class_l)).cpu().detach().numpy(), 4), "%",
                   "  Accuracy(total)=",
-                  np.around(100*n_corr/(it+1)/len(class_l),4), "%",
+                  np.around(100 * n_corr / (it + 1) / len(class_l), 4), "%",
                   sep="", end="")
 
 
@@ -248,28 +231,53 @@ class Trainer:
         for it, (_, class_l, _, paths) in enumerate(loader):
             class_l = class_l.to(self.device)
             for i, path in enumerate(paths):
-                data_n = self.image_preprocess(Image.open(path)).to(self.device).unsqueeze(0)
-                if i == 0:
-                    CLIP_image_features = self.clip_model.encode_image(data_n).type(torch.float32).to(self.device)
+                # image = Image.open(path)
+                frags = tile(path, d=224)
+                # image = torchvision.io.read_image(path)
+                for frag_idx, image in enumerate(frags):
+                    data = self.image_preprocess(image).to(self.device).unsqueeze(0)
+                    if frag_idx == 0:# and i == 0:
+                    #n_samples += 1
+                        data_n = data
+                    else:
+                        data_n = torch.cat((data_n, data), dim=0)
+                #data_n = torch.tensor(self.image_preprocess(image).to(self.device).unsqueeze(0) for image in frags)
+                CLIP_image_features = self.clip_model.encode_image(data_n).type(torch.float16).to(self.device)
+
+                encodings = (CLIP_image_features @ self.lin_projection_weights.T)
+                #if frag_idx == 0:
+                #    encodings = encoding_i
+                #else:
+                #    encodings = torch.cat((encodings, encoding_i), dim=0)
+
+                # -- sort outputs by entropy --> lowest first index and so on ==> very certain estimates are at low index
+
+                # if terra: dont use empty as much will be empty
+                if self.args.dataset == "Terra":
+                    rank_encodings = torch.cat(
+                        (torch.nn.Softmax(dim=-1)(encodings[:, :5]), torch.nn.Softmax(dim=-1)(encodings[:, 6:])), dim=1)
                 else:
-                    CLIP_image_features = torch.cat(
-                        (CLIP_image_features,
-                         self.clip_model.encode_image(data_n).type(torch.float32).to(self.device)),
-                        0)
+                    rank_encodings = torch.nn.Softmax(dim=-1)(encodings)
+                # Entropy = - \sum_p log_2(p) * p    #probability interpretation makes sense as we used softmax beforea
 
-            #data, class_l = data.to(self.device), class_l.to(self.device)
-            #CLIP_image_features = self.clip_model.encode_image(data)
-            CLIP_image_features /= CLIP_image_features.norm(dim=-1, keepdim=True)
+                entropies = -1 * torch.sum(torch.log2(rank_encodings) * rank_encodings, dim=-1)
+                _, indices = torch.sort(entropies)
+                # print(entropies.size(), encodings.size())
+                encodings = encodings[indices] * entropies[indices[0]] / entropies[indices, None]
 
-            if self.args.word_mode == "mean":
-                weights_cls = torch.sum(self.WEIGHTS, axis=1) / self.WEIGHTS.size(1)
+                # --mapping to a single output with self.combination_weights
+                outputs = torch.nn.Softmax(dim=-1)(self.combination_weights.T @ encodings)
 
-            if self.args.word_mode == "linear":
-                weights_cls = torch.squeeze(self.WEIGHTS.permute(0, 2, 1) @ self.linear_weight_cls)
+                # data, class_l, d_idx = data.to(self.device), class_l.to(self.device), d_idx.to(self.device)
+                torch.autograd.set_detect_anomaly(True)
 
-            cls_changing = cos_sim(CLIP_image_features[:, None, :], weights_cls[None, :, :]).type(
-                torch.float32)
-            predictions = torch.argmax(cls_changing, axis=-1)
+                if i == 0:
+                    output_list = outputs
+                else:
+                    output_list = torch.cat((output_list, outputs), dim=0)
+
+
+            predictions = torch.argmax(output_list, axis=-1)
                 #predictions = torch.argmax(nn.Softmax(dim=1).cuda()((CLIP_image_features @ self.weights_ctx.T).type(torch.float32)), dim=1)
 
 
@@ -339,8 +347,8 @@ def train_with_sweep():
         raise NotImplementedError
 
     for domain in args.Domain_ID:
-        #if domain == "location_100" or domain == "location_38" or domain == "location_43":
-        #    continue
+        if domain == "location_100" or domain == "location_38":# or domain == "location_43":
+            continue
         args.target = domain
         args.source = args.Domain_ID.copy()
         args.source.remove(args.target)
