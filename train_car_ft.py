@@ -18,7 +18,7 @@ import torchvision
 from PIL import ImageFile, Image
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-
+from imagenet_templates import imagenet_templates
 
 def get_args():
     parser = argparse.ArgumentParser(description="Script to launch CAR-FT")
@@ -48,6 +48,7 @@ def get_args():
     parser.add_argument("--prompts_file", default="", help="the pickle-file in which the prompt (already encoded) are [required for weight init], if no file given, use 'a style of a [class]'")
     parser.add_argument("--word_mode", default="mean", help="how the finetuning is computed a) mean [=default]: average all word vectors and finetune the representation b) linear: [=words are more important]: connect all word vectors with a linear layer and finetune those weights")
     parser.add_argument("--KL_factor", default=1)
+    parser.add_argument("--use_ImageNet_style_words", "-uIw", default=True)
     return parser.parse_args()
 
 
@@ -63,9 +64,9 @@ class Trainer:
         self.device = device
 
         clipper = args.CLIP.replace("/", "")
-        self.file_print = open(args.output_folder + "car_ft_"+args.word_mode+"_" + clipper + "_" + args.dataset, 'w',
+        self.file_print = open(args.output_folder + "car_ft_"+args.word_mode+"_" + clipper + "_" + args.dataset, 'a',
                                encoding="utf-8")
-
+        self.file_print.write("######################################################################### \n")
         self.clip_model, self.image_preprocess = clip.load(self.args.CLIP, device=self.device)
         self.image_preprocess_training = Compose([
                 torchvision.transforms.RandomResizedCrop(args.image_size, interpolation=BICUBIC),
@@ -92,17 +93,28 @@ class Trainer:
 
 
         for iteration, classname in enumerate(args.classes):
-            clip_name_loadable = self.args.CLIP.replace("/","")
-            try:
-                with open("saved_prompts/"+args.dataset+"_"+classname+"_"+clip_name_loadable+".pickle", 'rb') as fp:
-                    weights = pickle.load(fp)
-                print("loading of "+ "'saved_prompts/"+args.dataset+"_"+classname+"_"+clip_name_loadable+".pickle' successful!" )
-            except:
-                with torch.no_grad():
-                    self.clip_model.eval()
-                    weights = self.clip_model.encode_text(torch.cat([clip.tokenize(f"a {dID} of a {classname}.") for dID in self.text_anchor]).to(self.device)).detach().cpu().numpy()
-            #cls: 512 x n_cat (W = n_class x n_text_anchor x 512 ; n_class only later "weights"=n_text_anchor x 512
-            #ctx: 512 x n_text anchors
+            if args.use_ImageNet_style_words:
+                templates = imagenet_templates
+                texts = [template.format(classname) for template in templates]
+                weights = self.clip_model.encode_text(clip.tokenize(texts).to(self.device)).to(
+                        self.device)
+                weights /= (weights.norm(dim=-1, keepdim=True))
+                weights = weights.detach().cpu().numpy()
+            else:
+                clip_name_loadable = self.args.CLIP.replace("/","")
+                try:
+                    with open("saved_prompts/"+args.dataset+"_"+classname+"_"+clip_name_loadable+".pickle", 'rb') as fp:
+                        weights = pickle.load(fp)
+                    print("loading of "+ "'saved_prompts/"+args.dataset+"_"+classname+"_"+clip_name_loadable+".pickle' successful!" )
+                except:
+                    with (torch.no_grad()):
+                        self.clip_model.eval()
+                        weights = self.clip_model.encode_text(torch.cat([clip.tokenize(f"a {dID} of a {classname}.") for dID in self.text_anchor]).to(self.device))#.detach().cpu().numpy()
+                #cls: 512 x n_cat (W = n_class x n_text_anchor x 512 ; n_class only later "weights"=n_text_anchor x 512
+                #ctx: 512 x n_text anchors
+                        weights /= weights.norm(dim=-1, keepdim=True)
+                        weights = weights.detach().cpu().numpy()
+
             if iteration == 0:
                 weight_total = weights[None, :, :]
             else:
