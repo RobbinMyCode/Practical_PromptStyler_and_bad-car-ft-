@@ -202,8 +202,10 @@ class Trainer:
                 frozen_image_norm = frozen_image / frozen_image.norm(dim=-1, keepdim=True)
 
             if self.args.word_mode == "mean":
-                self.weights_cls = torch.sum(self.WEIGHTS, axis=1) / self.WEIGHTS.size(1)
-                self.weights_ctx = torch.sum(self.WEIGHTS, axis=0) / self.WEIGHTS.size(0)
+                self.weights_cls = torch.mean(self.WEIGHTS, axis=1) #/ self.WEIGHTS.size(1)
+                self.weights_cls  /= self.weights_cls.norm()
+                self.weights_ctx = torch.mean(self.WEIGHTS, axis=0) #/ self.WEIGHTS.size(0)
+                self.weights_ctx /= self.weights_ctx.norm()
 
             p_ctx_changing = softmax(cos_sim(CLIP_image_features_norm[:, None, :], self.weights_ctx[None, :, :]))
             p_ctx_stationary = softmax((cos_sim(frozen_image_norm[:, None, :], self.weights_ctx[None, :, :])).type(torch.float32))
@@ -274,7 +276,10 @@ class Trainer:
             CLIP_image_features /= CLIP_image_features.norm(dim=-1, keepdim=True)
 
             if self.args.word_mode == "mean":
-                weights_cls = torch.sum(self.WEIGHTS, axis=1) / self.WEIGHTS.size(1)
+                self.weights_cls = torch.mean(self.WEIGHTS, axis=1)  # / self.WEIGHTS.size(1)
+                self.weights_cls /= self.weights_cls.norm()
+                self.weights_ctx = torch.mean(self.WEIGHTS, axis=0)  # / self.WEIGHTS.size(0)
+                self.weights_ctx /= self.weights_ctx.norm()
 
             if self.args.word_mode == "linear":
                 weights_cls = torch.squeeze(self.WEIGHTS.permute(0, 2, 1) @ self.linear_weight_cls)
