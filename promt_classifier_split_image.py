@@ -21,11 +21,11 @@ from itertools import product
 import matplotlib.pyplot as plt
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Makes multiplre predictions from a known linear model (e.g. made by promtstyler); joining the predictions to a new one")
+    parser = argparse.ArgumentParser(description="Makes multiple predictions from a known linear model (e.g. made by promtstyler); joining the predictions to a new one")
     parser.add_argument("--dataset", default="Terra")
     parser.add_argument("--Domain_ID", default=['sketch', 'photo', 'cartoon', 'art_painting'])
     parser.add_argument("--classes", default=["dog", "elephant", "giraffe", "guitar", "horse", "house", "person"])
-    parser.add_argument("--batch_size", "-b", type=int, default=64, help="Batch size")
+    parser.add_argument("--batch_size", "-b", type=int, default=32, help="Batch size")
     parser.add_argument("--image_size", type=int, default=224, help="Image size")
     parser.add_argument("--min_scale", default=0.3, type=float, help="Minimum scale percent")
     parser.add_argument("--max_scale", default=1.0, type=float, help="Maximum scale percent")
@@ -125,7 +125,7 @@ class Trainer:
         print("Dataset size: train %d,  test %d" % (
                 self.train_data.__len__(), self.test_data.__len__()))
 
-        self.optimizer = torch.optim.SGD([self.combination_weights], lr=5e-03*(args.batch_size/64), weight_decay=0.1)
+        self.optimizer = torch.optim.SGD([self.combination_weights], lr=5e-05*(args.batch_size/64), weight_decay=0.1)
         #self.optimizer = torch.optim.AdamW(params, lr=5*10**-6*(args.batch_size/64), weight_decay=0.1)
         #self.optimizer, self.scheduler = get_optim_and_scheduler(self.model, args.epochs, args.learning_rate, args.train_all,
         #                                                         nesterov=False)
@@ -142,53 +142,84 @@ class Trainer:
         #_, labels, _, paths = next(iter(self.dataloader))
         n_samples = 0
         for it, (_, class_l, _, paths) in enumerate(self.source_loader):
-            class_l = class_l.to(self.device)
             break
+            class_l = class_l.to(self.device)
             for i, path in enumerate(paths):
                 #image = Image.open(path)
                 frags = tile(path, d=224)
                 #image = torchvision.io.read_image(path)
                 for frag_idx, image in enumerate(frags):
                     n_samples+=1
-                    data_n = self.image_preprocess(image).to(self.device).unsqueeze(0)
-                    CLIP_image_features = self.clip_model.encode_image(data_n).type(torch.float16).to(self.device)
-
-                    encoding_i = (CLIP_image_features @ self.lin_projection_weights.T)
-                    if frag_idx == 0:
-                        encodings = encoding_i
+                    data = self.image_preprocess(image).to(self.device).unsqueeze(0)
+                    #if i == 0:
+                    if frag_idx == 0 and i == 0:
+                        data_n = data
                     else:
-                        encodings = torch.cat((encodings, encoding_i), dim=0)
+                        data_n = torch.cat((data_n, data),0)
+                    #else:
+
+
+
+
+            CLIP_image_features = self.clip_model.encode_image(data_n).type(torch.float16).to(self.device)
+
+            encodings = (CLIP_image_features @ self.lin_projection_weights.T)
+                    #if frag_idx == 0:
+                    #    encodings = encoding_i
+                    #else:
+                    #    encodings = torch.cat((encodings, encoding_i), dim=0)
 
                 #-- sort outputs by entropy --> lowest first index and so on ==> very certain estimates are at low index
 
                 # if terra: dont use empty as much will be empty
+
+            for iteration in range(len(CLIP_image_features) // self.n_splits):
+
+                sample_idx = 1 + iteration * self.n_splits
+                sample_end_idx = self.n_splits + iteration * self.n_splits
+                empty_idx = 5 + iteration * self.n_splits
                 if self.args.dataset == "Terra":
-                    rank_encodings = torch.cat((torch.nn.Softmax(dim=-1)(encodings[:, :5]), torch.nn.Softmax(dim=-1)(encodings[:, 6:])), dim=1)
+                    rank_encodings = torch.cat((torch.nn.Softmax(dim=-1)(encodings[sample_idx:sample_end_idx, :empty_idx]),
+                                                torch.nn.Softmax(dim=-1)(encodings[sample_idx:sample_end_idx, (empty_idx+1):])), dim=1)
                 else:
-                    rank_encodings = torch.nn.Softmax(dim=-1)(encodings)
+                    rank_encodings = torch.nn.Softmax(dim=-1)(encodings[1:])
                 # Entropy = - \sum_p log_2(p) * p    #probability interpretation makes sense as we used softmax beforea
 
                 entropies = -1* torch.sum(torch.log2(rank_encodings)*rank_encodings, dim=-1)
+
                 _, indices = torch.sort(entropies)
                 #print(entropies.size(), encodings.size())
-                encodings = encodings[indices] * entropies[indices[0]]/entropies[indices, None]
+                part_encodings = encodings[sample_idx:sample_end_idx]
+                encodings[sample_idx:sample_end_idx] = part_encodings[indices] * entropies[indices[0]]/entropies[indices, None]
 
-                #--mapping to a single output with self.combination_weights
-                outputs = torch.nn.Softmax(dim=-1)(self.combination_weights.T @ encodings)
 
-                #data, class_l, d_idx = data.to(self.device), class_l.to(self.device), d_idx.to(self.device)
-                torch.autograd.set_detect_anomaly(True)
-
-                if i == 0:
+            #--mapping to a single output with self.combination_weights
+            #print(self.combination_weights.size(), encodings.size())
+            #print()
+            for sample_idx in range(len(class_l)):
+                #print("sample idx:",sample_idx * self.n_splits)
+                outputs = (self.combination_weights.T @ encodings[sample_idx*self.n_splits:sample_idx*self.n_splits+self.n_splits])
+                if sample_idx == 0:
                     output_list = outputs
                 else:
-                    output_list = torch.cat((output_list, outputs), dim=0)
+                    output_list = torch.cat((output_list,outputs), 0)
+
+
+
+
+            #data, class_l, d_idx = data.to(self.device), class_l.to(self.device), d_idx.to(self.device)
+            torch.autograd.set_detect_anomaly(True)
+
+            #if i == 0:
+            #output_list = torch.tensor(outputs)
+            #else:
+            #    output_list = torch.cat((output_list, outputs), dim=0)
             # Calculate features
             self.clip_model.eval()
 
 
             self.optimizer.zero_grad()
-
+            #labels = class_l.repeat_interleave(self.n_splits)
             # --- classification loss
             CrossEntropyLoss = CELoss(output_list, class_l)
 
@@ -236,46 +267,60 @@ class Trainer:
                 # image = torchvision.io.read_image(path)
                 for frag_idx, image in enumerate(frags):
                     data = self.image_preprocess(image).to(self.device).unsqueeze(0)
-                    if frag_idx == 0:# and i == 0:
-                    #n_samples += 1
+                    # if i == 0:
+                    if frag_idx == 0 and i == 0:
                         data_n = data
                     else:
-                        data_n = torch.cat((data_n, data), dim=0)
-                #data_n = torch.tensor(self.image_preprocess(image).to(self.device).unsqueeze(0) for image in frags)
-                CLIP_image_features = self.clip_model.encode_image(data_n).type(torch.float16).to(self.device)
+                        data_n = torch.cat((data_n, data), 0)
+                    # else:
 
-                encodings = (CLIP_image_features @ self.lin_projection_weights.T)
-                #if frag_idx == 0:
-                #    encodings = encoding_i
-                #else:
-                #    encodings = torch.cat((encodings, encoding_i), dim=0)
+            CLIP_image_features = self.clip_model.encode_image(data_n).type(torch.float16).to(self.device)
 
-                # -- sort outputs by entropy --> lowest first index and so on ==> very certain estimates are at low index
+            encodings = (CLIP_image_features @ self.lin_projection_weights.T)
+            # if frag_idx == 0:
+            #    encodings = encoding_i
+            # else:
+            #    encodings = torch.cat((encodings, encoding_i), dim=0)
 
-                # if terra: dont use empty as much will be empty
+            # -- sort outputs by entropy --> lowest first index and so on ==> very certain estimates are at low index
+
+            # if terra: dont use empty as much will be empty
+            for iteration in range(len(CLIP_image_features) // self.n_splits):
+
+                sample_idx = 1 + iteration * self.n_splits
+                sample_end_idx = self.n_splits + iteration * self.n_splits
+                empty_idx = 5 + iteration * self.n_splits
                 if self.args.dataset == "Terra":
                     rank_encodings = torch.cat(
-                        (torch.nn.Softmax(dim=-1)(encodings[:, :5]), torch.nn.Softmax(dim=-1)(encodings[:, 6:])), dim=1)
+                        (torch.nn.Softmax(dim=-1)(encodings[sample_idx:sample_end_idx, :empty_idx]),
+                         torch.nn.Softmax(dim=-1)(encodings[sample_idx:sample_end_idx, (empty_idx + 1):])), dim=1)
                 else:
-                    rank_encodings = torch.nn.Softmax(dim=-1)(encodings)
+                    rank_encodings = torch.nn.Softmax(dim=-1)(encodings[1:])
                 # Entropy = - \sum_p log_2(p) * p    #probability interpretation makes sense as we used softmax beforea
 
                 entropies = -1 * torch.sum(torch.log2(rank_encodings) * rank_encodings, dim=-1)
+
                 _, indices = torch.sort(entropies)
                 # print(entropies.size(), encodings.size())
-                encodings = encodings[indices] * entropies[indices[0]] / entropies[indices, None]
+                weighting_factor = (entropies[indices[0]] / entropies[indices, None])**2 #-1 * torch.log(entropies[indices[0]] / entropies[
+                    #indices, None]) * entropies[indices[0]] / entropies[indices, None]
 
-                # --mapping to a single output with self.combination_weights
-                outputs = torch.nn.Softmax(dim=-1)(self.combination_weights.T @ encodings)
+                part_encodings = encodings[sample_idx:sample_end_idx]
+                encodings[sample_idx:sample_end_idx] = part_encodings[indices] * weighting_factor
 
-                # data, class_l, d_idx = data.to(self.device), class_l.to(self.device), d_idx.to(self.device)
-                torch.autograd.set_detect_anomaly(True)
+                normalization = torch.sqrt(1+ torch.sum(weighting_factor**2, dim=0))
+                encodings[sample_idx:sample_end_idx] /= normalization
 
-                if i == 0:
+            # --mapping to a single output with self.combination_weights
+            # print(self.combination_weights.size(), encodings.size())
+            # print()
+            for sample_idx in range(len(class_l)):
+                outputs = (self.combination_weights.T @ encodings[
+                                                        sample_idx * self.n_splits:sample_idx * self.n_splits + self.n_splits])
+                if sample_idx == 0:
                     output_list = outputs
                 else:
-                    output_list = torch.cat((output_list, outputs), dim=0)
-
+                    output_list = torch.cat((output_list, outputs), 0)
 
             predictions = torch.argmax(output_list, axis=-1)
                 #predictions = torch.argmax(nn.Softmax(dim=1).cuda()((CLIP_image_features @ self.weights_ctx.T).type(torch.float32)), dim=1)
@@ -347,8 +392,8 @@ def train_with_sweep():
         raise NotImplementedError
 
     for domain in args.Domain_ID:
-        if domain == "location_100" or domain == "location_38":# or domain == "location_43":
-            continue
+        #if domain == "location_100" or domain == "location_38":# or domain == "location_43":
+        #    continue
         args.target = domain
         args.source = args.Domain_ID.copy()
         args.source.remove(args.target)

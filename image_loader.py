@@ -23,8 +23,8 @@ class CheapTestImageDataset(Dataset):
         self.class_names = class_names
         if isinstance(domains, str):
             self.img_dirs  = [base_path + "/" + domains + "/" + c_name + "/" for c_name in class_names]
-            self.file_names = np.array([np.array([f for f in listdir(dir) if isfile(join(dir, f))])
-                                                  for dir in self.img_dirs])
+            self.file_names = [[f for f in listdir(dir) if isfile(join(dir, f))]
+                                                  for dir in self.img_dirs]
             self.file_lengths_per_class_and_domain = np.array([len(files) for files in self.file_names])
             #print(self.file_lengths_per_class_and_domain)
             self.class_domain_start_index = [[0] for x in self.file_lengths_per_class_and_domain]
@@ -45,11 +45,11 @@ class CheapTestImageDataset(Dataset):
         else:
             self.img_dirs = [[base_path + "/" + domain + "/" + c_name + "/" for domain in domains] for c_name in class_names]
 
-            self.file_names = np.array([np.array([np.array([f for f in listdir(dir) if isfile(join(dir, f))])
-                                          for dir in dirs_domain]) for dirs_domain in self.img_dirs])
+            self.file_names = [[[f for f in listdir(dir) if isfile(join(dir, f))]
+                                          for dir in dirs_domain] for dirs_domain in self.img_dirs]
 
-            self.file_lengths_per_class_and_domain = np.array([np.array([len(files) for files in dirs_domain])
-                                                           for dirs_domain in self.file_names])
+            self.file_lengths_per_class_and_domain = [[len(files) for files in dirs_domain]
+                                                           for dirs_domain in self.file_names]
 
             self.class_domain_start_index = [[0 for x in dir_domain] for dir_domain in self.file_lengths_per_class_and_domain]
             n_classes = len(class_names)
@@ -272,11 +272,11 @@ class CheapTestImageDataset_image_outs(Dataset):
         else:
             self.img_dirs = [[base_path + "/" + domain + "/" + c_name + "/" for domain in domains] for c_name in class_names]
 
-            self.file_names = np.array([np.array([np.array([f for f in listdir(dir) if isfile(join(dir, f))])
-                                          for dir in dirs_domain]) for dirs_domain in self.img_dirs])
+            self.file_names = [[[f for f in listdir(dir) if isfile(join(dir, f))]
+                                          for dir in dirs_domain] for dirs_domain in self.img_dirs]
 
-            self.file_lengths_per_class_and_domain = np.array([np.array([len(files) for files in dirs_domain])
-                                                           for dirs_domain in self.file_names])
+            self.file_lengths_per_class_and_domain = [[len(files) for files in dirs_domain]
+                                                           for dirs_domain in self.file_names]
 
             self.class_domain_start_index = [[0 for x in dir_domain] for dir_domain in self.file_lengths_per_class_and_domain]
             n_classes = len(class_names)

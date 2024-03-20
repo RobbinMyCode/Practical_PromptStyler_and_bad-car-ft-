@@ -135,4 +135,21 @@ correct first (only 3 epochs):
 CAR FT TERRA L14
 Mean: 53.027, >= 42.44
 
-new thingi (no training): 55.9165 [4741] ; 45.758 [9736] ; 51.6877 [3970]
+new thingi (no training): 55.9165 [4741] ; 45.758 [9736] ; 51.6877 [3970]  ,, [5883]
+#zeroshot [0] single iter(last): 100:58.1101%
+without any training: 58.1101%; 46.9289%; 50.9824% ; 35.5431% -->46.999%
+with 5e-5: 58.0257;  46.9906; 50.906; (1 35.7131%, 2 35.5431%)
+
+ -   added normalization (first index off): 59.3757%, 48.5004%, 54.2569%, 40.2856% --> 49.0758%
+ -   (with first index): 58.152%,  46.9%, ...
+    -  (entropy_quot)^2 : 61.358%, 49.2194%, 52.3174%, 34.5742%
+
+
+CAR FT (updated)
+100 ~52.1  38~35.2 43~29
+
+CAR FT newer patch (SGD):
+46.04 44.32 49.29 38.95 --> 41.73 avrg
+
+CAR FT newest patch (SGD):
+52.4151 [epoch 1],

@@ -328,7 +328,6 @@ class Trainer:
                 batch_in = (input[batch_start : batch_start+batchsize])[randperm].to(self.device)
                 batch_target = (targets[batch_start : batch_start+batchsize])[randperm].to(self.device)
                 lin_model_pred, weights = self.lin_model(batch_in)
-
                 #softmax_pred = arcface_softmax(lin_model_pred, batch_in, weights)
                 loss_af = arcface_loss(lin_model_pred, batch_in, weights, batch_target)
                 loss = 0 * torch.nn.CrossEntropyLoss()(lin_model_pred, batch_target) + 1 * loss_af#self.lin_model.arcface_loss(lin_model_pred, batch_target)

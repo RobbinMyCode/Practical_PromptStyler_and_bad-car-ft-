@@ -120,7 +120,14 @@ class Trainer:
             else:
                 weight_total = np.concatenate((weight_total, weights[None, :, :]), axis=0)
 
-        self.WEIGHTS = torch.nn.Parameter(torch.tensor(weight_total, requires_grad=True, device=self.device, dtype=torch.float16))
+        self.WEIGHTS = torch.tensor(weight_total, requires_grad=False, device=self.device, dtype=torch.float16) #torch.nn.Parameter(torch.tensor(weight_total, requires_grad=True, device=self.device, dtype=torch.float16))
+        if self.args.word_mode == "mean":
+            with torch.no_grad():
+                self.weights_ctx_0 = torch.mean(self.WEIGHTS, axis=0)  # / self.WEIGHTS.size(0)
+                self.weights_ctx = self.weights_ctx_0 / self.weights_ctx_0.norm()
+            self.weights_cls_0 = torch.mean(self.WEIGHTS, axis=1)  # / self.WEIGHTS.size(1)
+            self.weights_cls = torch.nn.Parameter(self.weights_cls_0 / self.weights_cls_0.norm())
+            self.weights_cls.requires_grad = True
         if args.word_mode == "linear":
             self.linear_weight_cls = torch.nn.Parameter(1. / weight_total.shape[1] * torch.ones((weight_total.shape[1], 1), device=self.device,
                                                                     dtype=torch.float16, requires_grad=True))
@@ -136,7 +143,7 @@ class Trainer:
         self.test_data = CheapTestImageDataset(
             base_path="../data/" + args.dataset,
             domains=args.target, class_names=self.args.classes)
-        self.test_loader = torch.utils.data.DataLoader(self.test_data, batch_size=args.batch_size, shuffle=True)
+        self.test_loader = torch.utils.data.DataLoader(self.test_data, batch_size=2*args.batch_size, shuffle=True)
 
         self.comparison_data = CheapTestImageDataset_image_outs(
             base_path="../data/" + args.dataset, args=args,
@@ -151,9 +158,10 @@ class Trainer:
         print("Dataset size: train %d,  test %d" % (
                 self.train_data.__len__(), self.test_data.__len__()))
 
-        params = [param for param in self.clip_model.parameters()]+[self.WEIGHTS]
-        self.optimizer = torch.optim.SGD(params, lr=5e-06*(args.batch_size/64), weight_decay=0.1)
-        #self.optimizer = torch.optim.AdamW(params, lr=5*10**-6*(args.batch_size/64), weight_decay=0.1)
+        params = [param for param in self.clip_model.parameters()]+[self.weights_cls] #[self.WEIGHTS]
+        self.optimizer = torch.optim.SGD(params, lr=5e-06*(args.batch_size/64), weight_decay=0.1, momentum=0.8)
+        #self.optimizer = torch.optim.AdamW(params, lr=5e-06*(args.batch_size/64), weight_decay=0.1)
+        #self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max, eta_min=0, last_epoch=-1, verbose='deprecated')
         #self.optimizer, self.scheduler = get_optim_and_scheduler(self.model, args.epochs, args.learning_rate, args.train_all,
         #                                                         nesterov=False)
         self.current_epoch = 0
@@ -162,6 +170,7 @@ class Trainer:
         import time
         softmax = nn.Softmax(dim=-1).cuda()
         CELoss = nn.CrossEntropyLoss()
+        KLLoss = torch.nn.KLDivLoss(reduction="mean")
         cos_sim = torch.nn.CosineSimilarity(dim=-1)
 
         n_corr = 0
@@ -201,11 +210,7 @@ class Trainer:
                 #frozen_image = self.clip_frozen.encode_image(data)
                 frozen_image_norm = frozen_image / frozen_image.norm(dim=-1, keepdim=True)
 
-            if self.args.word_mode == "mean":
-                self.weights_cls = torch.mean(self.WEIGHTS, axis=1) #/ self.WEIGHTS.size(1)
-                self.weights_cls  /= self.weights_cls.norm()
-                self.weights_ctx = torch.mean(self.WEIGHTS, axis=0) #/ self.WEIGHTS.size(0)
-                self.weights_ctx /= self.weights_ctx.norm()
+
 
             p_ctx_changing = softmax(cos_sim(CLIP_image_features_norm[:, None, :], self.weights_ctx[None, :, :]))
             p_ctx_stationary = softmax((cos_sim(frozen_image_norm[:, None, :], self.weights_ctx[None, :, :])).type(torch.float32))
@@ -214,16 +219,19 @@ class Trainer:
             self.optimizer.zero_grad()
 
             # --- classification loss
-            CrossEntropyLoss = CELoss(cls_changing, class_l)
+            CrossEntropyLoss = CELoss(cls_changing, class_l) #if it != 0 else 0
             # --- kl loss
             log_changing = torch.log(p_ctx_changing)
             log_stat  = torch.log(p_ctx_stationary)
-            kl_loss = F.kl_div(log_stat,
-                               log_changing,
-                               log_target=True,
-                               reduction='batchmean')
 
-            loss = self.args.KL_factor *kl_loss + CrossEntropyLoss
+            #kl_loss = F.kl_div(p_ctx_stationary,
+            #                   log_changing,
+            #                   #log_target=True,
+            #                   reduction='batchmean')
+            kl_loss = KLLoss(log_changing, p_ctx_stationary)
+
+            loss = self.args.KL_factor *kl_loss #+ CrossEntropyLoss
+
             loss.backward()
             self.optimizer.step()
 
@@ -275,19 +283,13 @@ class Trainer:
             #CLIP_image_features = self.clip_model.encode_image(data)
             CLIP_image_features /= CLIP_image_features.norm(dim=-1, keepdim=True)
 
-            if self.args.word_mode == "mean":
-                self.weights_cls = torch.mean(self.WEIGHTS, axis=1)  # / self.WEIGHTS.size(1)
-                self.weights_cls /= self.weights_cls.norm()
-                self.weights_ctx = torch.mean(self.WEIGHTS, axis=0)  # / self.WEIGHTS.size(0)
-                self.weights_ctx /= self.weights_ctx.norm()
 
             if self.args.word_mode == "linear":
                 weights_cls = torch.squeeze(self.WEIGHTS.permute(0, 2, 1) @ self.linear_weight_cls)
 
-            cls_changing = cos_sim(CLIP_image_features[:, None, :], weights_cls[None, :, :]).type(
+            cls_changing = cos_sim(CLIP_image_features[:, None, :], self.weights_cls[None, :, :]).type(
                 torch.float32)
             predictions = torch.argmax(cls_changing, axis=-1)
-                #predictions = torch.argmax(nn.Softmax(dim=1).cuda()((CLIP_image_features @ self.weights_ctx.T).type(torch.float32)), dim=1)
 
 
             class_correct += torch.sum(predictions == class_l)
@@ -356,8 +358,8 @@ def train_with_sweep():
         raise NotImplementedError
 
     for domain in args.Domain_ID:
-        #if domain == "location_100" or domain == "location_38" or domain == "location_43":
-        #    continue
+        if domain == "location_100":# or domain == "location_38":# or domain == "location_43":
+            continue
         args.target = domain
         args.source = args.Domain_ID.copy()
         args.source.remove(args.target)
