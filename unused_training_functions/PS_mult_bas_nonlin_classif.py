@@ -4,15 +4,16 @@ import open_clip
 from helpers.models import *
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Script to launch CLIP distillation")
+    parser = argparse.ArgumentParser(description="PromptStyler but non-linear Layer for classification, its just worse")
     parser.add_argument("--dataset", default="PACS")
     parser.add_argument("--batch_size", "-b", type=int, default=500, help="number of images to load in a batch")
     parser.add_argument("--epochs", "-e", type=int, default=100, help="Number of epochs for each styleword")
-    parser.add_argument("--lin_epochs", "-le", type=int, default=10000, help="Number of epochs to trai the lin classifier on pseudowords")
+    parser.add_argument("--lin_epochs", "-le", type=int, default=2000, help="Number of epochs to trai the lin classifier on pseudowords")
     parser.add_argument("--GPU_num", default="0", help="specify which GPU(s) to be used")
+    parser.add_argument("--data_path", default='../../data', help="path of the dataset")
     parser.add_argument("--seed", type=int, default=0, help="seed")
     parser.add_argument("--CLIP", default="ViT-B/16", help="CLIP model")
-    parser.add_argument("--number_style_words", "-n", type=int, default=5, help="number of stylewords to train") #(33% at 1 for 3, 37->40 for 30)
+    parser.add_argument("--number_style_words", "-n", type=int, default=5, help="number of stylewords to train")
     parser.add_argument("--save_style_words", default="no",
                         help='''if 'yes' saves the style-context words as /saved_prompts/[dataset]_[class]_[CLIP model].pickle,
                                 if 'extend' extends the style-context words in /saved_prompts/[dataset]_[class]_[CLIP model].pickle by the newly created ones.
@@ -65,7 +66,7 @@ class Trainer:
 
         self.target_name = target_name
         self.test_data = CheapTestImageDataset(
-            base_path="/home/robin/Documents/Domain_Generalization/data/" + args.dataset,
+            base_path=self.args.data_path+"/" + args.dataset,
             domains=self.args.target, class_names=self.args.classes)
         self.dataloader = torch.utils.data.DataLoader(self.test_data, batch_size=args.batch_size, shuffle=True)
 
