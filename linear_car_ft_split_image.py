@@ -16,29 +16,14 @@ from itertools import product
 def get_args():
     parser = argparse.ArgumentParser(description="Makes multiple predictions from a known linear model (e.g. made by promtstyler); joining the predictions to a new one")
     parser.add_argument("--dataset", default="Terra")
-    parser.add_argument("--Domain_ID", default=['sketch', 'photo', 'cartoon', 'art_painting'])
-    parser.add_argument("--classes", default=["dog", "elephant", "giraffe", "guitar", "horse", "house", "person"])
     parser.add_argument("--batch_size", "-b", type=int, default=1, help="Batch size")
     parser.add_argument("--image_size", type=int, default=224, help="Image size")
-    parser.add_argument("--min_scale", default=0.3, type=float, help="Minimum scale percent")
-    parser.add_argument("--max_scale", default=1.0, type=float, help="Maximum scale percent")
-    parser.add_argument("--random_horiz_flip", default=0.5, type=float, help="Chance of random horizontal flip")
-    parser.add_argument("--jitter", default=0.0, type=float, help="Color jitter amount")
-    parser.add_argument("--tile_random_grayscale", default=0.0, type=float, help="Chance of randomly greyscale")
-    parser.add_argument("--learning_rate", "-l", type=float, default=.001, help="Learning rate")
     parser.add_argument("--epochs", "-e", type=int, default=3, help="Number of epochs")
-    parser.add_argument("--n_classes", "-c", type=int, default=7, help="Number of classes")
-    parser.add_argument("--network", default="resnetv2_50x1_bit.goog_in21k_ft_in1k", help="Which network to use")
-    parser.add_argument("--val_size", type=float, default="0.1", help="Validation size (between 0 and 1)")
-    parser.add_argument("--folder_name", default='', help="Used by the logger to save logs")
-    parser.add_argument("--train_all", default=True, type=bool, help="If true, all network weights will be trained")
     parser.add_argument("--GPU_num", default="0", help="specify which GPU(s) to be used")
     parser.add_argument("--seed", type=int, default=0, help="seed")
     parser.add_argument("--CLIP", default="ViT-L/14", help="CLIP model")
-    parser.add_argument("--output_folder", default='run1', help="folder where to save results file")
-    parser.add_argument("--output_file_name", default='.txt', help="results file name")
+    parser.add_argument("--output_folder", default='results', help="folder where to save results file")
     parser.add_argument("--data_path", default='../data', help="path of the dataset")
-    parser.add_argument("--prompts_file", default="", help="the pickle-file in which the prompt (already encoded) are [required for weight init], if no file given, use 'a style of a [class]'")
     parser.add_argument("--word_mode", default="mean", help="how the finetuning is computed a) mean [=default]: average all word vectors and finetune the representation b) linear: [=words are more important]: connect all word vectors with a linear layer and finetune those weights")
     parser.add_argument("--KL_factor", default=1)
     return parser.parse_args()
@@ -122,7 +107,7 @@ class Trainer:
 
 
         clipper = args.CLIP.replace("/", "")
-        self.file_print = open(args.output_folder + "image_splitter_"+args.word_mode+"_" + clipper + "_" + args.dataset, 'w',
+        self.file_print = open(args.output_folder + "/image_splitter_"+args.word_mode+"_" + clipper + "_" + args.dataset, 'w',
                                encoding="utf-8")
         if args.dataset == "Terra":
             self.img_dims=[1024, 747]
