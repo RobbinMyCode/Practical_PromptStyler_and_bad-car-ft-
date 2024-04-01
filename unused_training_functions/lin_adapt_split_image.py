@@ -8,7 +8,8 @@ from itertools import product
 #ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Makes multiple predictions from a known linear model (e.g. made by promtstyler); joining the predictions to a new one")
+    parser = argparse.ArgumentParser(description="Makes multiple predictions from a known linear model (e.g. made by promtstyler); "
+                                                 "joining the predictions to a new one, FINETUNING the lin layer weights, but does not work")
     parser.add_argument("--dataset", default="Terra")
     parser.add_argument("--batch_size", "-b", type=int, default=10, help="Batch size")
     parser.add_argument("--epochs", "-e", type=int, default=1, help="Number of epochs")
@@ -16,18 +17,11 @@ def get_args():
     parser.add_argument("--seed", type=int, default=0, help="seed")
     parser.add_argument("--CLIP", default="ViT-B/16", help="CLIP model")
     parser.add_argument("--output_folder", default='run1', help="folder where to save results file")
-    parser.add_argument("--output_file_name", default='.txt', help="results file name")
-    parser.add_argument("--data_path", default='../data', help="path of the dataset")
-    parser.add_argument("--prompts_file", default="", help="the pickle-file in which the prompt (already encoded) "
-                                    "are [required for weight init], if no file given, use 'a style of a [class]'")
-    parser.add_argument("--word_mode", default="mean", help="how the finetuning is computed "
-                                    "a) mean [=default]: average all word vectors and finetune the representation "
-                                    "b) linear: [=words are more important]: connect all word vectors with a linear layer and finetune those weights")
+    parser.add_argument("--data_path", default='../../data', help="path of the dataset")
     parser.add_argument("--KL_factor", default=1)
     parser.add_argument("--norm", default=False, help="if to norm image inputs (lin-weights from PS classifier have to fit)")
     parser.add_argument("--swap_entropy", default=1.5, help="the value of entropy the best sub-image must"
                                                           " have to be swapped with centercrop -->weighted with 1 and centercrop lower)")
-    #parser.add_argument("--adapter_hidden_size", default=256, help="hidden size for mapping")
 
     return parser.parse_args()
 
@@ -44,7 +38,6 @@ def tile(filePath, d, overlap_factor=1): #does not generalize yet, # fragments n
 
     warning: may fail for-non integer overlap factors (due to faulty sized "grid")
     '''
-    name, ext = os.path.splitext(filePath)
     img = Image.open(filePath)
     w, h = img.size
 
@@ -64,8 +57,6 @@ class Trainer:
         self.relative_entropy = args.swap_entropy
         self.feature_dim = 512 if args.CLIP == "ViT-B/16" else 768
         clipper = args.CLIP.replace("/", "")
-        self.file_print = open(args.output_folder + "/image_splitter_"+args.word_mode+"_" + clipper + "_" + args.dataset, 'w',
-                               encoding="utf-8")
         if args.dataset == "Terra":
             self.img_dims=[1024, 747]
             self.n_splits = 13
@@ -79,8 +70,8 @@ class Trainer:
             param.requires_grad = False
 
         clip_name_loadable = self.args.CLIP.replace("/", "")
-        with open("saved_prompts/" + args.dataset + "_weights_" + clip_name_loadable + ".pickle", 'rb') as fp:
-            self.lin_projection_weights_i = pickle.load(fp) #torch.tensor(pickle.load(fp), requires_grad=False, device=self.device, dtype=torch.float16)
+        with open("../saved_prompts/" + args.dataset + "_weights_" + clip_name_loadable + ".pickle", 'rb') as fp:
+            self.lin_projection_weights_i = pickle.load(fp)
 
         if args.norm:
             print("using normed encodings")
@@ -88,8 +79,7 @@ class Trainer:
 
 
         weight_init = np.ones((self.n_splits, 1))
-        #for idx in range(len(weight_init)):
-        #    weight_init[idx] *= 1 - (idx+1)/self.n_splits
+
         self.combination_weights = torch.tensor(weight_init, requires_grad=False, device=self.device, dtype=torch.float16)
         self.exponent = torch.tensor(512, requires_grad=False, device=self.device, dtype=torch.float16)
         self.norm_bias = torch.tensor(1, requires_grad=False, device=self.device, dtype=torch.float16)
@@ -101,12 +91,12 @@ class Trainer:
 
 
         self.train_data = CheapTestImageDataset(
-            base_path="../data/" + args.dataset,
+            base_path=self.args.data_path+"/" + args.dataset,
             domains=args.source, class_names=self.args.classes)
         self.source_loader = torch.utils.data.DataLoader(self.train_data, batch_size=args.batch_size, shuffle=True)
 
         self.test_data = CheapTestImageDataset(
-            base_path="../data/" + args.dataset,
+            base_path=self.args.data_path+"/" + args.dataset,
             domains=args.target, class_names=self.args.classes)
         self.test_loader = torch.utils.data.DataLoader(self.test_data, batch_size=args.batch_size, shuffle=True)
 
@@ -223,8 +213,6 @@ class Trainer:
                 class_correct = self.do_test(loader)
                 class_acc = float(class_correct) / total
                 print("Accuracies on "+phase+":", "\t", np.around(100*class_acc, 4),"%", sep="", end="")
-                self.file_print.write(self.args.target+
-                    "__Accuracies on "+phase+":"+ "\t"+ str(np.around(100*class_acc, 4)) + "% \n")
                 self.results[phase][self.current_epoch] = class_acc
 
     def do_test(self, loader):
@@ -390,8 +378,6 @@ def train_with_sweep():
         raise NotImplementedError
 
     for domain in args.Domain_ID:
-        if (domain in ["location_100", "location_38"]):
-            continue
         args.target = domain
         args.source = args.Domain_ID.copy()
         args.source.remove(args.target)
@@ -399,17 +385,6 @@ def train_with_sweep():
         print(*args.source, sep=",")
         print("Test on target domains:")
         print(args.target)
-
-        now = datetime.now().strftime("%m-%d-%y_%H:%M:%S")
-        output_file_name = now + '_' + args.dataset + '_' + args.target + '.txt'
-        output_folder = os.path.join(os.getcwd(), 'results', args.output_folder)
-        if os.path.exists(output_folder):
-            pass
-        else:
-            os.makedirs(output_folder)
-        args.output_file_name = os.path.join(output_folder, output_file_name)
-        print("output results are saved at: {}".format(args.output_file_name))
-
 
         trainer = Trainer(args, device)
         trainer.do_training()

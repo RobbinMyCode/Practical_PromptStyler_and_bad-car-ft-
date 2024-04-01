@@ -56,8 +56,6 @@ class Trainer:
         self.device = device
 
         clipper = args.CLIP.replace("/", "")
-        self.file_print = open(args.output_folder + "/image_splitter_" + clipper + "_" + args.dataset, 'w',
-                               encoding="utf-8")
         if args.dataset == "Terra":
             self.img_dims=[1024, 747]
             self.n_splits = 13
@@ -85,12 +83,12 @@ class Trainer:
 
 
         self.train_data = CheapTestImageDataset(
-            base_path=self.args.datapath+"/"+ args.dataset,
+            base_path=self.args.data_path+"/"+ args.dataset,
             domains=args.source, class_names=self.args.classes)
         self.source_loader = torch.utils.data.DataLoader(self.train_data, batch_size=args.batch_size, shuffle=True)
 
         self.test_data = CheapTestImageDataset(
-            base_path=self.args.datapath+"/"+ args.dataset,
+            base_path=self.args.data_path+"/"+ args.dataset,
             domains=args.target, class_names=self.args.classes)
         self.test_loader = torch.utils.data.DataLoader(self.test_data, batch_size=args.batch_size, shuffle=True)
 
@@ -205,8 +203,6 @@ class Trainer:
                 class_correct = self.do_test(loader)
                 class_acc = float(class_correct) / total
                 print("Accuracies on "+phase+":", "\t", np.around(100*class_acc, 4),"%", sep="", end="")
-                self.file_print.write(self.args.target+
-                    "__Accuracies on "+phase+":"+ "\t"+ str(np.around(100*class_acc, 4)) + "% \n")
                 self.results[phase][self.current_epoch] = class_acc
 
     def do_test(self, loader):
