@@ -5,14 +5,14 @@ from helpers.models import *
 
 def get_args():
     parser = argparse.ArgumentParser(description="Script to launch CLIP distillation")
-    parser.add_argument("--dataset", default="Terra")
+    parser.add_argument("--dataset", default="PACS")
     parser.add_argument("--batch_size", "-b", type=int, default=500, help="number of images to load in a batch")
     parser.add_argument("--epochs", "-e", type=int, default=100, help="Number of epochs for each styleword")
-    parser.add_argument("--lin_epochs", "-le", type=int, default=5000, help="Number of epochs to trai the lin classifier on pseudowords")
+    parser.add_argument("--lin_epochs", "-le", type=int, default=10000, help="Number of epochs to trai the lin classifier on pseudowords")
     parser.add_argument("--GPU_num", default="0", help="specify which GPU(s) to be used")
     parser.add_argument("--seed", type=int, default=0, help="seed")
-    parser.add_argument("--CLIP", default="ViT-L/14", help="CLIP model")
-    parser.add_argument("--number_style_words", "-n", type=int, default=90, help="number of stylewords to train") #(33% at 1 for 3, 37->40 for 30)
+    parser.add_argument("--CLIP", default="ViT-B/16", help="CLIP model")
+    parser.add_argument("--number_style_words", "-n", type=int, default=5, help="number of stylewords to train") #(33% at 1 for 3, 37->40 for 30)
     parser.add_argument("--save_style_words", default="no",
                         help='''if 'yes' saves the style-context words as /saved_prompts/[dataset]_[class]_[CLIP model].pickle,
                                 if 'extend' extends the style-context words in /saved_prompts/[dataset]_[class]_[CLIP model].pickle by the newly created ones.
@@ -80,9 +80,9 @@ class Trainer:
         class_words = self.args.classes
         self.optimizer_sgd.zero_grad()
 
-        model_output = self.word_model_dyn(class_words, style_index=self.n_style_vec)
+        model_output = self.word_model_dyn(class_words)
         with torch.no_grad():
-            total_output = self.word_model(class_words, style_index=self.n_style_vec)
+            total_output = self.word_model(class_words)
 
         # print("before:", total_output[0][ :5, :5], "\n")
         total_output[0][self.n_style_vec] = model_output[0]
@@ -129,7 +129,7 @@ class Trainer:
         return class_correct
 
     def do_training(self):
-        if self.args.dataset == "Terra":
+        if True:#self.args.dataset == "Terra":
             word_basises_start = ["a nice photo of a", "a photo of a", "a photo of the large","a wildlife camera recording of a"]#, "a camera trap photo of a"]#  ] #"a photo style of a",
             word_basises_end = ["", "", "", ""]
             pseudo_index = [2, 2, 5, 4]
@@ -178,7 +178,7 @@ class Trainer:
                     self.word_model.style_words[self.n_style_vec] = self.word_model_dyn.style_words.detach().clone()
 
 
-            final_style_content_dummy = self.word_model(self.args.classes, style_index=change_index)[1].detach().cpu().numpy()
+            final_style_content_dummy = self.word_model(self.args.classes)[1].detach().cpu().numpy()
             if first_run:
                 final_style_content_words = final_style_content_dummy
                 first_run = False

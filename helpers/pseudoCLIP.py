@@ -394,7 +394,7 @@ def create_model_(
             dtype = torch.float16 if 'fp16' in precision else torch.bfloat16
             # manual mixed precision that matches original OpenAI behaviour
             if is_timm_model:
-                # FIXME this is a bit janky, create timm based model in low-precision and
+                # from open_clip --F-I-X-M-E this is a bit janky, create timm based model in low-precision and
                 # then cast only LayerNormFp32 instances back to float32 so they don't break.
                 # Why? The convert_weights_to_lp fn only works with native models.
                 model.to(device=device, dtype=dtype)
