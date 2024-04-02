@@ -135,7 +135,7 @@ class Trainer:
                     if self.args.dataset == "Terra":
                         rank_encodings = torch.cat((torch.nn.Softmax(dim=-1)(encodings[sample_idx:sample_end_idx, :empty_idx]),
                                                     torch.nn.Softmax(dim=-1)(encodings[sample_idx:sample_end_idx, (empty_idx+1):])), dim=1)
-                        rank_encodings /= torch.sum(rank_enccodings, dim=0) #all probs sum up to 1 (without "empty") --> important for entropy
+                        rank_encodings /= torch.sum(rank_encodings, dim=0) #all probs sum up to 1 (without "empty") --> important for entropy
                     else:
                         rank_encodings = torch.nn.Softmax(dim=-1)(encodings[1:])
 

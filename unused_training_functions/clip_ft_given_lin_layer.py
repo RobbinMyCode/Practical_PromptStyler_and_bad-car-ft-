@@ -2,26 +2,23 @@ import argparse
 from torch import nn
 import pickle
 from helpers.image_loader import *
-import torchvision
 from PIL import ImageFile, Image
-from torchvision.transforms import Compose, ToTensor, Normalize
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-from helpers.imagenet_templates import imagenet_templates
+
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Script to launch CAR-FT")
+    parser = argparse.ArgumentParser(description="Script to finetune CLIP given a linear layer and text embeddings, does not work properly")
     parser.add_argument("--dataset", default="Terra")
-    parser.add_argument("--batch_size", "-b", type=int, default=32, help="Batch size")
+    parser.add_argument("--batch_size", "-b", type=int, default=75, help="Batch size")
     parser.add_argument("--image_size", type=int, default=224, help="Image size")
-    parser.add_argument("--epochs", "-e", type=int, default=40, help="Number of epochs")
+    parser.add_argument("--epochs", "-e", type=int, default=10, help="Number of epochs")
     parser.add_argument("--GPU_num", default="0", help="specify which GPU(s) to be used")
     parser.add_argument("--seed", type=int, default=0, help="seed")
     parser.add_argument("--CLIP", default="ViT-B/16", help="CLIP model")
-    parser.add_argument("--output_folder", default='results', help="folder where to save results file")
-    parser.add_argument("--data_path", default='../data', help="path of the dataset")
-    parser.add_argument("--prompts_file", default="", help="the pickle-file in which the prompt (already encoded) are [required for weight init], if no file given, use 'a style of a [class]'")
-    parser.add_argument("--KL_factor", default=1)
-    parser.add_argument("--use_ImageNet_style_words", "-uIw", default=False)
+    parser.add_argument("--data_path", default='../../data', help="path of the dataset")
+    parser.add_argument("--save_clip_model", type=bool, default=False, help="whether to save finetuned clip model")
+    parser.add_argument("--norm", type=bool, default=False,
+                        help="if to norm image inputs (lin-weights from PS classifier have to fit)")
     return parser.parse_args()
 
 
@@ -30,60 +27,47 @@ class Trainer:
         self.args = args
         self.device = device
 
-        clipper = args.CLIP.replace("/", "")
-        self.file_print = open(args.output_folder + "/car_ft_" + clipper + "_" + args.dataset, 'a',
-                               encoding="utf-8")
-        self.file_print.write("######################################################################### \n")
-
         self.clip_model, self.image_preprocess = clip.load(self.args.CLIP, device=self.device)
-        self.image_preprocess_training = Compose([
-                torchvision.transforms.RandomResizedCrop(args.image_size, interpolation=BICUBIC),
-                torchvision.transforms.RandomHorizontalFlip(),
-                lambda image: image.convert("RGB"),
-                ToTensor(),
-                Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
-            ])
-        self.clip_frozen, _ = clip.load(self.args.CLIP, device=self.device)
-        for name, param in self.clip_frozen.named_parameters():
-            param.requires_grad = False
 
-        #-- get prompt basis (either load, image-net or 'a {domain} of a {class}')
+        # -- get prompt basis (either load or 'a {domain} of a {class}')
         for iteration, classname in enumerate(args.classes):
-            if args.use_ImageNet_style_words:
-                templates = imagenet_templates
-                texts = [template.format(classname) for template in templates]
-                weights = self.clip_model.encode_text(clip.tokenize(texts).to(self.device)).to(
-                        self.device)
-                weights /= (weights.norm(dim=-1, keepdim=True))
-                weights = weights.detach().cpu().numpy()
-            else:
-                clip_name_loadable = self.args.CLIP.replace("/","")
-                try:
-                    with open("saved_prompts/"+args.dataset+"_"+classname+"_"+clip_name_loadable+".pickle", 'rb') as fp:
-                        weights = pickle.load(fp)
-                    print("loading of "+ "'saved_prompts/"+args.dataset+"_"+classname+"_"+clip_name_loadable+".pickle' successful!" )
-                except:
-                    with (torch.no_grad()):
-                        self.clip_model.eval()
-                        weights = self.clip_model.encode_text(torch.cat([clip.tokenize(f"a {dID} of a {classname}.") for dID in self.text_anchor]).to(self.device))#.detach().cpu().numpy()
-                        weights /= weights.norm(dim=-1, keepdim=True)
-                        weights = weights.detach().cpu().numpy()
-
+            clip_name_loadable = self.args.CLIP.replace("/", "")
+            try:
+                with open("saved_prompts/" + args.dataset + "_" + classname + "_" + clip_name_loadable + ".pickle",
+                          'rb') as fp:
+                    text_embed = pickle.load(fp)
+                print(
+                    "loading of " + "'saved_prompts/" + args.dataset + "_" + classname + "_" + clip_name_loadable + ".pickle' successful!")
+            except:
+                with (torch.no_grad()):
+                    self.clip_model.eval()
+                    text_embed = self.clip_model.encode_text(
+                        torch.cat([clip.tokenize(f"a {dID} of a {classname}.") for dID in self.text_anchor]).to(
+                            self.device))  # .detach().cpu().numpy()
+                    if self.args.norm:
+                        text_embed /= text_embed.norm(dim=-1, keepdim=True)
+                    text_embed = text_embed.detach().cpu().numpy()
+            #text embed shape (num_prompts, embedding_size)
             if iteration == 0:
-                weight_total = weights[None, :, :]
+                text_embed_per_class = text_embed[None, :, :]
             else:
-                weight_total = np.concatenate((weight_total, weights[None, :, :]), axis=0)
+                text_embed_per_class = np.concatenate((text_embed_per_class, text_embed[None, :, :]), axis=0)
+            #text_embed_per_class shape (n_classes, num_prompts, embedding_size)
 
-        self.WEIGHTS = torch.tensor(weight_total, requires_grad=False, device=self.device, dtype=torch.float16)
+        self.embed_tensor = torch.tensor(text_embed_per_class, requires_grad=False, device=self.device,
+                                    dtype=torch.float16)
 
-        with torch.no_grad():
-            self.weights_ctx_0 = torch.mean(self.WEIGHTS, axis=0)
-            self.weights_ctx = self.weights_ctx_0 / self.weights_ctx_0.norm()
 
-            self.weights_cls_0 = torch.mean(self.WEIGHTS, axis=1)
-            self.weights_cls = torch.nn.Parameter(self.weights_cls_0 / self.weights_cls_0.norm())
-        self.weights_cls.requires_grad = True
 
+        #-- get linear layer
+        clip_name_loadable = self.args.CLIP.replace("/", "")
+        with open("saved_prompts/" + args.dataset + "_weights_" + clip_name_loadable + ".pickle", 'rb') as fp:
+            self.lin_projection_weights = torch.tensor(pickle.load(fp), requires_grad=False, device=self.device,
+                                                       dtype=torch.float16)
+
+        if args.norm:
+            print("using normed encodings")
+            self.lin_projection_weights /= self.lin_projection_weights.norm(dim=-1, keepdim=True)
 
         self.train_data = CheapTestImageDataset(
             base_path=self.args.data_path+"/" + args.dataset,
@@ -93,71 +77,63 @@ class Trainer:
         self.test_data = CheapTestImageDataset(
             base_path=self.args.data_path+"/" + args.dataset,
             domains=args.target, class_names=self.args.classes)
-        self.test_loader = torch.utils.data.DataLoader(self.test_data, batch_size=2*args.batch_size, shuffle=True)
+        self.test_loader = torch.utils.data.DataLoader(self.test_data, batch_size=args.batch_size, shuffle=True)
 
         self.test_loaders = {"test": self.test_loader}
         self.len_dataloader = len(self.source_loader)
         print("Dataset size: train %d,  test %d" % (
                 self.train_data.__len__(), self.test_data.__len__()))
 
-        params = [param for param in self.clip_model.parameters()]+[self.weights_cls]
-        self.optimizer = torch.optim.SGD(params, lr=5e-06*(args.batch_size/64), weight_decay=0.1, momentum=0.8)
+        params = [param for param in self.clip_model.parameters()]
+        self.optimizer = torch.optim.SGD(params, lr=5e-09*(args.batch_size/64), weight_decay=0.1, momentum=0.8)
         #self.optimizer = torch.optim.AdamW(params, lr=5e-06*(args.batch_size/64), weight_decay=0.1)
 
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, 8000, eta_min=0, last_epoch=-1)
         self.current_epoch = 0
 
     def _do_epoch(self):
-        softmax = nn.Softmax(dim=-1).cuda()
         CELoss = nn.CrossEntropyLoss()
-        KLLoss = torch.nn.KLDivLoss(reduction="batchmean")
         cos_sim = torch.nn.CosineSimilarity(dim=-1)
-        n_samples = 0
+
         n_corr = 0
+        n_samples = 0
         for it, (_, class_l, _, paths) in enumerate(self.source_loader):
             class_l = class_l.to(self.device)
             for i, path in enumerate(paths):
                 image = Image.open(path)
-                data_n = self.image_preprocess_training(image).to(self.device).unsqueeze(0)
+                data_n = self.image_preprocess(image).to(self.device).unsqueeze(0)
                 if i == 0:
                     data = data_n
                 else:
                     data = torch.cat((data, data_n), dim=0)
 
             CLIP_image_features = self.clip_model.encode_image(data).type(torch.float16).to(self.device)
-            frozen_image = self.clip_frozen.encode_image(data)
-            torch.autograd.set_detect_anomaly(True)
+            #cos-sim to prompt-embedding as invariant features
+            cs_loss = -1*torch.log(torch.sum(cos_sim(CLIP_image_features[:, None, :], self.embed_tensor[class_l][None,: ,:])))
+
+
 
             # Calculate features
             self.clip_model.eval()
-            CLIP_image_features_norm = CLIP_image_features / CLIP_image_features.norm(dim=-1, keepdim=True)
+            if self.args.norm:
+                CLIP_image_features = CLIP_image_features / CLIP_image_features.norm(dim=-1, keepdim=True)
 
-            with torch.no_grad():
-                frozen_image_norm = frozen_image / frozen_image.norm(dim=-1, keepdim=True)
 
-            p_ctx_changing = softmax(CLIP_image_features_norm[:, :] @ self.weights_ctx[:, :].T)
-            p_ctx_stationary = softmax(frozen_image_norm[:, :] @ self.weights_ctx[:, :].T).type(torch.float16)
-            cls_changing = cos_sim(CLIP_image_features[:, None, :], self.weights_cls[None, :, :]).type(
-                torch.float16)
-
-            self.optimizer.zero_grad()
-
+            encodings = torch.nn.Softmax(dim=-1)(CLIP_image_features @ self.lin_projection_weights.T)
             # --- classification loss
-            CrossEntropyLoss = CELoss(cls_changing, class_l)
-            # --- kl loss
-            log_changing = torch.log(p_ctx_changing)
-            kl_loss = KLLoss(log_changing, p_ctx_stationary)
+            CrossEntropyLoss = CELoss(encodings, class_l)
+            loss = 0.001*CrossEntropyLoss + 1 * cs_loss
 
-            loss = self.args.KL_factor *kl_loss + CrossEntropyLoss
             loss.backward()
             self.optimizer.step()
             self.scheduler.step()
 
             # --- state of training print
-            correct_class = torch.argmax(cls_changing, dim=-1)==class_l
-            print("\r", end="")
-            n_corr +=  torch.sum(correct_class).cpu().detach().numpy()
+            correct_class = torch.argmax(encodings, dim=-1)==class_l
             n_samples += len(class_l)
+            n_corr += torch.sum(correct_class).cpu().detach().numpy()
+            print("\r", end="")
+
             print(n_samples," / ", len(self.source_loader.dataset), ": ",
                   np.around(100*n_samples/len(self.source_loader.dataset), 4), "%  of epoch done.",
                   " Accuracy(batch)=",
@@ -174,14 +150,12 @@ class Trainer:
                 class_correct = self.do_test(loader)
                 class_acc = float(class_correct) / total
                 print("Accuracies on "+phase+":", "\t", np.around(100*class_acc, 4),"%", sep="", end="")
-                self.file_print.write(self.args.target+
-                    "__Accuracies on "+phase+":"+ "\t"+ str(np.around(100*class_acc, 4)) + "% \n")
                 self.results[phase][self.current_epoch] = class_acc
 
     def do_test(self, loader):
         class_correct = 0
         total = 0
-        cos_sim = torch.nn.CosineSimilarity(dim=-1)
+        top2_corr = 0
         for it, (_, class_l, _, paths) in enumerate(loader):
             class_l = class_l.to(self.device)
             for i, path in enumerate(paths):
@@ -193,16 +167,20 @@ class Trainer:
                         (CLIP_image_features,
                          self.clip_model.encode_image(data_n).type(torch.float16).to(self.device)),
                         0)
+            if self.args.norm:
+                CLIP_image_features /= CLIP_image_features.norm(dim=-1, keepdim=True)
 
-            CLIP_image_features /= CLIP_image_features.norm(dim=-1, keepdim=True)
-            cls_changing = cos_sim(CLIP_image_features[:, None, :], self.weights_cls[None, :, :]).type(
-                torch.float16)
+            encodings = torch.nn.Softmax(dim=-1)(CLIP_image_features @ self.lin_projection_weights.T)
+            predictions = torch.argmax(encodings, axis=-1)
+            top_2_pred = torch.topk(encodings, dim=-1, k=2).indices[:, 1]
 
-            predictions = torch.argmax(cls_changing, axis=-1)
             class_correct += torch.sum(predictions == class_l)
             total += len(class_l)
+            top2_corr += torch.sum(top_2_pred == class_l) + torch.sum(predictions == class_l)
             print("\r", end="")
-            print(str(class_correct.cpu().numpy())+" ouf of", total ,"correct ("+str(class_correct.cpu().numpy()/total*100)+"%)", end="")
+            print(str(class_correct.cpu().numpy()) + " ouf of ", total
+                  , " correct (" + str(class_correct.cpu().numpy() / total * 100) + "%) ",
+                  "(top2: ", np.around(top2_corr.cpu().numpy() / total * 100, 3), "%)", end="", sep="")
 
         return class_correct
 
@@ -220,6 +198,16 @@ class Trainer:
         idx_best = val_res.argmax()
         print("Best val %g, corresponding test %g - best test: %g, best epoch: %g" % (
         val_res.max(), test_res[idx_best], test_res.max(), idx_best))
+
+        if self.args.save_clip_model:
+            pref = 'saved_prompts/'
+            path_p2 = self.args.dataset + self.args.Domain_ID + self.args.CLIP + ".pickle"
+            path = pref + path_p2.replace("/", "")
+
+            with open(path, 'wb') as handle:
+                pickle.dump(self.clip_model, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            print("CLIP model saved for (test on) ", self.args.Domain_ID ," saved \n", "=======================================", sep="")
+
 
 
 def train_with_sweep():

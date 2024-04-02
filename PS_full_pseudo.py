@@ -2,7 +2,7 @@ from helpers.models import *
 import open_clip
 def get_args():
     parser = argparse.ArgumentParser(description="Script to launch PromptStyler with full pseudo words")
-    parser.add_argument("--dataset", default="PACS")
+    parser.add_argument("--dataset", default="Terra")
     parser.add_argument("--batch_size", "-b", type=int, default=1000, help="Batch size (for images in test)")
     parser.add_argument("--epochs", "-e", type=int, default=20, help="Number of epochs for each styleword")
     parser.add_argument("--GPU_num", default="0", help="specify which GPU(s) to be used")
@@ -11,7 +11,7 @@ def get_args():
     parser.add_argument("--number_style_words", "-n", default=20, help="number of stylewords for each prompt-length to train")
     parser.add_argument("--pseudo_lengths", default=[4, 3], help="length of sequences pseudowords are trained for")
     parser.add_argument("--class_words_index", "-ci", default=[4, 3], help="indizes where to put class, poss values = 'all': every position, or a list of lists (for each pseudo_length) e.g [[0,1,2], [2]]")
-    parser.add_argument("--save_style_words", default="no", help='''if 'yes' saves the style-context words as /saved_prompts/[dataset]_[class]_[CLIP model].pickle,
+    parser.add_argument("--save_style_words", default="extend", help='''if 'yes' saves the style-context words as /saved_prompts/[dataset]_[class]_[CLIP model].pickle,
                                                     if 'extend' extends the style-context words in /saved_prompts/[dataset]_[class]_[CLIP model].pickle by the newly created ones.
                                                     saves are as numpy arrays''')
     parser.add_argument("--save_lin_weights", type=bool, default=False,

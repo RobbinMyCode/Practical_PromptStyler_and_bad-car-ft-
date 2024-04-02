@@ -60,7 +60,7 @@ python PS_full_pseudo.py\
 ```
 ### Launch a training/evaluation: Already trained PromptStyler Linear Layer in Split-Image (only specified for Terra, larger improvement)
 ```
-python prompt_classifier_split_image.py\
+python Linear_split_image.py\
        --dataset "Terra" --seed 0  --data_path "your datasets path"  --CLIP "ViT-L/14"
        --norm False --batch_size 35
 ```
