@@ -14,7 +14,7 @@ def get_args():
     parser.add_argument("--save_style_words", default="extend", help='''if 'yes' saves the style-context words as /saved_prompts/[dataset]_[class]_[CLIP model].pickle,
                                                     if 'extend' extends the style-context words in /saved_prompts/[dataset]_[class]_[CLIP model].pickle by the newly created ones.
                                                     saves are as numpy arrays''')
-    parser.add_argument("--save_lin_weights", type=bool, default=False,
+    parser.add_argument("--save_lin_weights", type=bool, default=True,
                         help="if True: save weights for linear mapping in /saved_prompts/[dataset]_weights_[CLIP model].pickle")
     parser.add_argument("--norm", type=bool, default=False, help="if to norm word/image representations for classification")
     return parser.parse_args()

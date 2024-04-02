@@ -12,11 +12,11 @@ def get_args():
     parser.add_argument("--seed", type=int, default=0, help="seed")
     parser.add_argument("--CLIP", default="ViT-B/16", help="CLIP model")
     parser.add_argument("--number_style_words", "-n", type=int, default=3, help="number of stylewords to train")
-    parser.add_argument("--save_style_words", default="no",
+    parser.add_argument("--save_style_words", default="yes",
                         help='''if 'yes' saves the style-context words as /saved_prompts/[dataset]_[class]_[CLIP model].pickle,
                                 if 'extend' extends the style-context words in /saved_prompts/[dataset]_[class]_[CLIP model].pickle by the newly created ones.
                                 saves are as numpy arrays''')
-    parser.add_argument("--save_lin_weights", type=bool, default=False,
+    parser.add_argument("--save_lin_weights", type=bool, default=True,
                         help="if True: save weights for linear mapping in /saved_prompts/[dataset]_weights_[CLIP model].pickle")
     parser.add_argument("--increase_style_diversity", type=bool, default=False, help="if true makes style_words less similar (different init),"
                                                                           " but therefore can also negatively impact quality of liner classifier")

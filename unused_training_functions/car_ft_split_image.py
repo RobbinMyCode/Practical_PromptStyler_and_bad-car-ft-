@@ -8,7 +8,7 @@ from itertools import product
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Makes multiple predictions from a known linear model (e.g. made by promtstyler); joining the predictions to a new one")
+    parser = argparse.ArgumentParser(description="Makes multiple predictions (sub-images) based on CAR-FT; joining the predictions to a new one, KL only on centercrops")
     parser.add_argument("--dataset", default="Terra")
     parser.add_argument("--batch_size", "-b", type=int, default=5, help="Batch size")
     parser.add_argument("--data_path", default='../../data', help="path of the dataset")

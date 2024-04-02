@@ -7,27 +7,27 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 def get_args():
     parser = argparse.ArgumentParser(description="Script to launch PromptStyler (OG) training")
-    parser.add_argument("--dataset", default="PACS")
+    parser.add_argument("--dataset", default="Terra")
     parser.add_argument("--batch_size", "-b", type=int, default=500, help="Batch size (to load images with)")
-    parser.add_argument("--epochs", "-e", type=int, default=3, help="Number of epochs for each styleword")
+    parser.add_argument("--epochs", "-e", type=int, default=50, help="Number of epochs for each styleword")
     parser.add_argument("--lin_epochs", "-le", type=int, default=50, help="Number of epochs for each styleword")
     parser.add_argument("--GPU_num", default="0", help="specify which GPU(s) to be used")
     parser.add_argument("--seed", type=int, default=0, help="seed")
     parser.add_argument("--CLIP", default="ViT-B/16", help="CLIP model")
     parser.add_argument("--output_folder", default='results', help="folder where to save training results file")
     parser.add_argument("--data_path", default='../data', help="path of the dataset")
-    parser.add_argument("--number_style_words", "-n", default=10, help="number of stylewords to train")
-    parser.add_argument("--style_word_basis", default='a photo style of a',
+    parser.add_argument("--number_style_words", "-n", default=80, help="number of stylewords to train")
+    parser.add_argument("--style_word_basis", default='a wildlife camera recording of a',
                         help="wordbasis for which stylewords are created, photo --> pseudoword")
-    parser.add_argument("--style_word_index", default=1,
+    parser.add_argument("--style_word_index", default=4,
                         help="index of which word in style_word_basis shall be replaced by pseudoword; must be int in [0, len(style_word_basis)]")
-    parser.add_argument("--save_style_words", default="no",
+    parser.add_argument("--save_style_words", default="yes",
                         help='''if 'yes' saves the style-context words as /saved_prompts/[dataset]_[class]_[CLIP model].pickle,
                                 if 'extend' extends the style-context words in /saved_prompts/[dataset]_[class]_[CLIP model].pickle by the newly created ones.
                                 saves are as numpy arrays''')
-    parser.add_argument("--save_lin_weights", type=bool, default=False,
+    parser.add_argument("--save_lin_weights", type=bool, default=True,
                         help="if True: save weights for linear mapping in /saved_prompts/[dataset]_weights_[CLIP model].pickle")
-    parser.add_argument("--norm", default=True, help="if to norm text and image embeddings")
+    parser.add_argument("--norm", default=False, help="if to norm text and image embeddings")
 
 
     return parser.parse_args()

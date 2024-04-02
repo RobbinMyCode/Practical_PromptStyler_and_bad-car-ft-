@@ -17,10 +17,10 @@ def get_args():
     parser.add_argument("--data_path", default='../data', help="path of the dataset")
     parser.add_argument("--KL_factor", default=1)
     parser.add_argument("--norm", type=bool, default=False, help="if to norm image inputs (lin-weights from PS classifier have to fit)")
-    parser.add_argument("--train_normal_bias", type=bool, default=False, help="sub-images get weighted be "
-                                        "weights[i]/sqrt([normal_bias]+L2(weights)), init value: [normal_bias]=1")
     parser.add_argument("--swap_entropy", default=1.45, help="the value of entropy the best sub-image must be less or equal"
                                                           " to be swapped with centercrop -->weighted with 1 and centercrop lower")
+    parser.add_argument("--train_normal_bias", type=bool, default=False, help="Determines if a trainig is done (for normal_bias); sub-images get weighted be "
+                                                                              "weights[i]/sqrt([normal_bias]+L2(weights)), init value: [normal_bias]=1")
 
     return parser.parse_args()
 

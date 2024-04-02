@@ -33,7 +33,7 @@ class Trainer:
         for iteration, classname in enumerate(args.classes):
             clip_name_loadable = self.args.CLIP.replace("/", "")
             try:
-                with open("saved_prompts/" + args.dataset + "_" + classname + "_" + clip_name_loadable + ".pickle",
+                with open("../saved_prompts/" + args.dataset + "_" + classname + "_" + clip_name_loadable + ".pickle",
                           'rb') as fp:
                     text_embed = pickle.load(fp)
                 print(
@@ -42,7 +42,7 @@ class Trainer:
                 with (torch.no_grad()):
                     self.clip_model.eval()
                     text_embed = self.clip_model.encode_text(
-                        torch.cat([clip.tokenize(f"a {dID} of a {classname}.") for dID in self.text_anchor]).to(
+                        torch.cat([clip.tokenize(f"a {dID} of a {classname}.") for dID in self.args.Domain_ID]).to(
                             self.device))  # .detach().cpu().numpy()
                     if self.args.norm:
                         text_embed /= text_embed.norm(dim=-1, keepdim=True)
@@ -61,7 +61,7 @@ class Trainer:
 
         #-- get linear layer
         clip_name_loadable = self.args.CLIP.replace("/", "")
-        with open("saved_prompts/" + args.dataset + "_weights_" + clip_name_loadable + ".pickle", 'rb') as fp:
+        with open("../saved_prompts/" + args.dataset + "_weights_" + clip_name_loadable + ".pickle", 'rb') as fp:
             self.lin_projection_weights = torch.tensor(pickle.load(fp), requires_grad=False, device=self.device,
                                                        dtype=torch.float16)
 
