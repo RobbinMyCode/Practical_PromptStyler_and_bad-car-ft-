@@ -6,7 +6,7 @@ def get_args():
                                                  "actually only uses last word basis for linear layer, but 'warming up' style words seems benefitial")
     parser.add_argument("--dataset", default="Terra")
     parser.add_argument("--batch_size", "-b", type=int, default=500, help="number of images to load in a batch")
-    parser.add_argument("--epochs", "-e", type=int, default=175, help="Number of epochs for each styleword")
+    parser.add_argument("--epochs", "-e", type=int, default=100, help="Number of epochs for each styleword")
     parser.add_argument("--lin_epochs", "-le", type=int, default=100, help="Number of epochs to trai the lin classifier on pseudowords")
     parser.add_argument("--GPU_num", default="0", help="specify which GPU(s) to be used")
     parser.add_argument("--seed", type=int, default=0, help="seed")
