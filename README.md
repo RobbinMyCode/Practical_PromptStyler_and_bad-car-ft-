@@ -41,21 +41,21 @@ Terra may be named terra_incognita, if so,  a rename is required.
 ### Launch a training: vanilla PromptStyler
 ```
 python train_promptstyler.py\
-       --dataset "PACS" --seed 0 --output_folder "sweep1" --data_path "your datasets path"  --CLIP "ViT-L/14"
+       --dataset "PACS" --seed 0 --output_folder "results" --data_path "your datasets path"  --CLIP "ViT-L/14"
        --norm True --style_word_basis "a some style of a" --style_word_index 1
 ```
 
 ### Launch a training: multiple basis PromptStyler (only useful for Terra)
 ```
 python PS_mult_bas.py\
-       --dataset "Terra" --seed 0 --output_folder "sweep1" --data_path "your datasets path"  --CLIP "ViT-L/14"
+       --dataset "Terra" --seed 0 --output_folder "results" --data_path "your datasets path"  --CLIP "ViT-L/14"
        --norm False
 ```
 
 ### Launch a training: FULL pseudo words PromptStyler (tends to be not better than the OG)
 ```
 python PS_full_pseudo.py\
-       --dataset "Terra" --seed 0 --output_folder "sweep1" --data_path "your datasets path"  --CLIP "ViT-L/14"
+       --dataset "Terra" --seed 0 --output_folder "results" --data_path "your datasets path"  --CLIP "ViT-L/14"
        --norm False --number_style_words 15 --pseudo_lengths [4,3] --class_words_index [4,3]
 ```
 ### Launch a training/evaluation: Already trained PromptStyler Linear Layer in Split-Image (only specified for Terra, larger improvement)
@@ -73,7 +73,7 @@ python Linear_split_image.py\
 ### Launch a training: vanilla CAR-FT
 ```
 python train_promptstyler.py\
-       --dataset "PACS" --seed 0 --output_folder "sweep1" --data_path "your datasets path" 
+       --dataset "PACS" --seed 0 --output_folder "results" --data_path "your datasets path" 
        --use_ImageNet_style_words False
 ```
 * ImageNet StyleWords are the default for Terra, if False: use  Prompts Saved by a PromptStyler variant if possible, else "a photo of a {class}"
